@@ -832,8 +832,8 @@ function calcApprovalTerms(optionName, l) {
       "New Monthly PITI": fmt$(newPITI),
       ...(is40yr
         ? {
-            "P&I Reduction": piReductionPct != null ? piReductionPct.toFixed(1)+"% reduction (must be ≥ 10%)" : "Enter current P&I",
-            "P&I Reduction ≥ 10%?": piReductionPct != null ? (piReductionPct >= 10 ? "✅ Yes" : "❌ No — does not meet 10% threshold") : "Enter current P&I",
+            "P&I Reduction (Informational)": piReductionPct != null ? piReductionPct.toFixed(1)+"% reduction — note: 10% minimum removed by Circular 26-25-2" : "Enter current P&I",
+            "Payment Relief Achieved?": piReductionPct != null ? (piReductionPct > 0 ? `✅ Yes — ${piReductionPct.toFixed(1)}% reduction (${fmt$(currentPI_val)} → ${fmt$(newPI)})` : `⚠️ No reduction — review terms`) : "Enter current P&I",
           }
         : {
             "Payment Reduction (PITI)": pitiReductionPct != null
@@ -1381,7 +1381,8 @@ function evaluateVA(l) {
     results.push({option:"VA Disaster Modification",eligible:vb&&!l.activeRPP&&l.pmmsLeCurrentPlus1&&l.dlqAtDisasterLt30&&l.loanGe60DaysDLQ&&l.previousWorkoutForbearance&&l.workoutStateActivePassed,nodes:[...vN,node("ActiveRPP=False",!l.activeRPP,!l.activeRPP),node("PMMS≤Rate+1%",l.pmmsLeCurrentPlus1,l.pmmsLeCurrentPlus1),node("<30d at Declaration",l.dlqAtDisasterLt30,l.dlqAtDisasterLt30),node("Loan≥60d DLQ",l.loanGe60DaysDLQ,l.loanGe60DaysDLQ),node("Prev=Forbearance",l.previousWorkoutForbearance,l.previousWorkoutForbearance),node("Workout{Active,Passed}",l.workoutStateActivePassed,l.workoutStateActivePassed)]});
     results.push({option:"VA Disaster Extend Modification",eligible:vb&&l.hardshipDuration!=="Resolved"&&l.dlqGe12ContractualPayments&&l.dlqAtDisasterLt30&&l.loanGe60DaysDLQ&&l.previousWorkoutForbearance&&l.workoutStateActivePassed,nodes:[...vN,node("Hardship≠Resolved",l.hardshipDuration,l.hardshipDuration!=="Resolved"),node("DLQ≥12 Contractual",l.dlqGe12ContractualPayments,l.dlqGe12ContractualPayments),node("<30d at Declaration",l.dlqAtDisasterLt30,l.dlqAtDisasterLt30),node("Loan≥60d DLQ",l.loanGe60DaysDLQ,l.loanGe60DaysDLQ),node("Prev=Forbearance",l.previousWorkoutForbearance,l.previousWorkoutForbearance),node("Workout{Active,Passed}",l.workoutStateActivePassed,l.workoutStateActivePassed)]});
   }
-  // ── Waterfall per VA M26-4: Reinstatement → Repayment Plan → Special Forbearance → Modification → VASP → Disposition ──
+  // ── VA M26-4 Chapter 5 options — NOTE: Home Retention Waterfall (Appendix F) RESCINDED May 1, 2025 per Circular 26-25-2.
+  //    Servicers must offer best option for borrower's circumstances per 38 C.F.R. §36.4319; preferred order still considered. ──
   // 1. Reinstatement — VA M26-4 §2.A: first option; borrower pays all arrears in one lump sum
   results.push({option:"VA Reinstatement",eligible:vb&&rH&&dlqD>=1&&l.borrowerCanAffordReinstateOrRepay,nodes:[...vN,node("Hardship=Resolved",l.hardshipDuration,rH),node("DLQ>0",dlqD,dlqD>=1),node("Can afford reinstatement",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay)]});
   // 2. Repayment Plan — resolved hardship, borrower can make regular payment + catch-up
@@ -1392,10 +1393,11 @@ function evaluateVA(l) {
   results.push({option:"VA Traditional Modification",eligible:vb&&sH&&dlqD>=61&&l.borrowerConfirmedCannotAffordCurrent&&l.borrowerCanAffordModifiedPayment&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Std hardship",l.hardshipType,sH),node("DLQ≥61d",dlqD,dlqD>=61),node("Confirmed cannot afford current",l.borrowerConfirmedCannotAffordCurrent,l.borrowerConfirmedCannotAffordCurrent),node("CAN afford modified",l.borrowerCanAffordModifiedPayment,l.borrowerCanAffordModifiedPayment),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
   // 4b. 30-Year Loan Modification — rate = PMMS, 360-month term
   results.push({option:"VA 30-Year Loan Modification",eligible:vb&&sH&&dlqD>=61&&l.borrowerConfirmedCannotAffordCurrent&&!l.borrowerCanAffordCurrentMonthly&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Std hardship",l.hardshipType,sH),node("DLQ≥61d",dlqD,dlqD>=61),node("Confirmed cannot afford current",l.borrowerConfirmedCannotAffordCurrent,l.borrowerConfirmedCannotAffordCurrent),node("Cannot afford current monthly",!l.borrowerCanAffordCurrentMonthly,!l.borrowerCanAffordCurrentMonthly),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
-  // 4c. 40-Year Loan Modification — Circular 26-22-18; rate=PMMS, 480-month term, P&I ≥10% reduction; NO resolved-hardship requirement
-  results.push({option:"VA 40-Year Loan Modification",eligible:vb&&sH&&dlqD>=61&&l.borrowerConfirmedCannotAffordCurrent&&oo&&l.modifiedPILe90PctOld&&l.borrowerIntentRetention,nodes:[...vN,node("Std hardship",l.hardshipType,sH),node("DLQ≥61d",dlqD,dlqD>=61),node("Confirmed cannot afford",l.borrowerConfirmedCannotAffordCurrent,l.borrowerConfirmedCannotAffordCurrent),node("Owner Occupied",l.occupancyStatus,oo),node("P&I≤90% old P&I (≥10% reduction)",l.modifiedPILe90PctOld,l.modifiedPILe90PctOld),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention)]});
-  // 5. VASP — VA purchases loan; all modification options must be exhausted first
-  results.push({option:"VASP (VA Partial Claim)",eligible:vb&&l.continuousIncome&&!l.canAchieveTargetByReamort&&pcPct<=30&&oo&&dlqD>=61&&l.borrowerIntentRetention,nodes:[...vN,node("Continuous income",l.continuousIncome,l.continuousIncome),node("Cannot achieve target by mod",!l.canAchieveTargetByReamort,!l.canAchieveTargetByReamort),node(`PC(${pcPct}%)≤30%`,pcPct,pcPct<=30),node("Owner Occupied",l.occupancyStatus,oo),node("DLQ≥61d",dlqD,dlqD>=61),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention)]});
+  // 4c. 40-Year Loan Modification — Circular 26-22-18; rate=PMMS, 480-month term
+  //     NOTE: 10% P&I reduction requirement REMOVED by Circular 26-25-2 (effective May 1, 2025)
+  results.push({option:"VA 40-Year Loan Modification",eligible:vb&&sH&&dlqD>=61&&l.borrowerConfirmedCannotAffordCurrent&&oo&&l.borrowerIntentRetention,nodes:[...vN,node("Std hardship",l.hardshipType,sH),node("DLQ≥61d",dlqD,dlqD>=61),node("Confirmed cannot afford",l.borrowerConfirmedCannotAffordCurrent,l.borrowerConfirmedCannotAffordCurrent),node("Owner Occupied",l.occupancyStatus,oo),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention)]});
+  // 5. VASP — DISCONTINUED May 1, 2025 per Circular 26-25-2; no new submissions accepted
+  results.push({option:"VASP (VA Partial Claim)",eligible:false,nodes:[node("Program status","Discontinued — VA rescinded VASP effective May 1, 2025 (Circular 26-25-2). No new submissions accepted.",false)],note:"VASP ended May 1, 2025. Use 40-Year Modification instead."});
   // 6. Disposition options
   const ce=ltH&&vb&&((dlqD<=60&&l.completeBRP)||(dlqD>=60&&l.borrowerIntentDisposition));
   results.push({option:"VA Compromise Sale",eligible:ce,nodes:[...vN,node("Long Term/Perm",l.hardshipDuration,ltH),node("DLQ/BRP/Disposition",ce,ce)]});
