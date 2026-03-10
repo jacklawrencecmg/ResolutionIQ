@@ -1,5 +1,13 @@
 import { useState, useCallback, useMemo } from "react";
 
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+// Update entries below to add/remove authorized users
+const VALID_LOGINS:{[user:string]:string} = {
+  "jlawrence": "CMGRockets2025!",
+  "admin":     "RocketMods2025!",
+};
+const AUTH_KEY = "rocketmods_auth";
+
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LOAN_TYPES = ["FHA","USDA","VA","FNMA","FHLMC"];
 const TABS = ["inputs","results","audit","report","compare"];
@@ -1748,6 +1756,47 @@ function CalcTermsPanel({ optionName, loan }) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const [loggedIn,setLoggedIn]=useState(()=>sessionStorage.getItem(AUTH_KEY)==="1");
+  const [loginUser,setLoginUser]=useState("");
+  const [loginPass,setLoginPass]=useState("");
+  const [loginErr,setLoginErr]=useState("");
+  const handleLogin=(e:React.FormEvent)=>{
+    e.preventDefault();
+    if (VALID_LOGINS[loginUser.trim()]===loginPass) {
+      sessionStorage.setItem(AUTH_KEY,"1");
+      setLoggedIn(true);
+    } else {
+      setLoginErr("Invalid username or password.");
+      setLoginPass("");
+    }
+  };
+  if (!loggedIn) return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 mb-4 shadow-lg">
+            <span className="text-2xl">🚀</span>
+          </div>
+          <h1 className="text-2xl font-black text-white tracking-tight">Rocket Mods</h1>
+          <p className="text-slate-400 text-sm mt-1">Loss Mitigation Rules Engine</p>
+        </div>
+        <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Username</label>
+            <input autoFocus className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="Enter username" value={loginUser} onChange={e=>{setLoginUser(e.target.value);setLoginErr("");}}/>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Password</label>
+            <input type="password" className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="Enter password" value={loginPass} onChange={e=>{setLoginPass(e.target.value);setLoginErr("");}}/>
+          </div>
+          {loginErr&&<p className="text-red-400 text-xs font-medium">{loginErr}</p>}
+          <button type="submit" className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">Sign In</button>
+        </form>
+        <p className="text-center text-slate-600 text-xs mt-6">CMG Financial · Loss Mitigation</p>
+      </div>
+    </div>
+  );
+
   const [loan,setLoan]=useState({
     ...initLoan,
     loanType:"FHA",
@@ -1841,8 +1890,11 @@ export default function App() {
               <p className="text-blue-300 text-xs font-medium">FHA · USDA · VA · FNMA · FHLMC Loss Mitigation Rules Engine</p>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 bg-white/10 rounded-xl p-1 backdrop-blur-sm">
-            {LOAN_TYPES.map(t=>(<button key={t} onClick={()=>{set("loanType",t);setEvaluated(false);setResults([]);}} className={`px-4 py-1.5 rounded-lg text-sm font-black transition-all ${loan.loanType===t?"bg-white text-slate-900 shadow-md":"text-blue-200 hover:text-white hover:bg-white/10"}`}>{t}</button>))}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-white/10 rounded-xl p-1 backdrop-blur-sm">
+              {LOAN_TYPES.map(t=>(<button key={t} onClick={()=>{set("loanType",t);setEvaluated(false);setResults([]);}} className={`px-4 py-1.5 rounded-lg text-sm font-black transition-all ${loan.loanType===t?"bg-white text-slate-900 shadow-md":"text-blue-200 hover:text-white hover:bg-white/10"}`}>{t}</button>))}
+            </div>
+            <button onClick={()=>{sessionStorage.removeItem(AUTH_KEY);setLoggedIn(false);}} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all" title="Sign out">Sign out</button>
           </div>
         </div>
       </div>
