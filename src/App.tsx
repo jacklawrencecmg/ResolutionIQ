@@ -2506,11 +2506,14 @@ export default function App() {
 
   const handleSignUp=async(e:React.FormEvent)=>{
     e.preventDefault(); setAuthErr(""); setAuthLoading(true);
-    const {data:signUpData,error}=await supabase.auth.signUp({email,password,options:{data:{full_name:fullName}}});
+    const {data:signUpData,error}=await supabase.auth.signUp({email,password});
     if(error){ setAuthErr(error.message); setAuthLoading(false); return; }
     if(signUpData.user){
-      // Profile row is created by DB trigger; wait a moment then verify
-      await new Promise(r=>setTimeout(r,800));
+      await supabase.from("profiles").insert({
+        id: signUpData.user.id,
+        email: signUpData.user.email,
+        full_name: fullName,
+      });
       setScreen("pending");
     }
     setAuthLoading(false);
