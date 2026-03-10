@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const LOAN_TYPES = ["FHA","USDA","VA"];
+const LOAN_TYPES = ["FHA","USDA","VA","FNMA"];
 const TABS = ["inputs","results","audit","report","compare"];
 const TAB_LABELS = { inputs:"📋 Inputs", results:"✅ Results", audit:"🔍 Audit Trail", report:"📄 Report", compare:"⚖️ Compare" };
 const HARDSHIP_TYPES = ["Reduction in Income","Unemployment","Business Failure","Increase in Housing Expenses","Property Problem","Unknown","Disaster"];
@@ -64,6 +64,29 @@ const initLoan = {
   usdaDLQGt30:false, usdaCompleteBRP:false,
   usdaDLQLe60AndBRP:false, usdaDLQGe60AndDisposition:false,
   usdaPriorWorkoutCompSaleFailed:false,
+  // FNMA
+  fnmaLoanAge:"24",
+  fnmaPropertyType:"Principal Residence",
+  fnmaHardshipResolved:false,
+  fnmaCanResumeFull:false,
+  fnmaCannotReinstate:true,
+  fnmaImminentDefault:false,
+  fnmaWithin36MonthsMaturity:false,
+  fnmaPriorDeferralMonths:"24",
+  fnmaCumulativeDeferredMonths:"0",
+  fnmaPriorModCount:"0",
+  fnmaFailedTPP12Months:false,
+  fnmaReDefaulted12Months:false,
+  fnmaRecourseArrangement:false,
+  fnmaActiveLiquidation:false,
+  fnmaActiveRepayPlan:false,
+  fnmaActivePendingOffer:false,
+  fnmaActiveTPP:false,
+  fnmaDisasterHardship:false,
+  fnmaFEMADesignation:false,
+  fnmaInsuredLoss:false,
+  fnmaDelinquencyAtDisaster:"0",
+  fnmaSameDlisasterPriorDeferral:false,
   // VA
   activeRPP:false, pmmsLeCurrentPlus1:true,
   dlqAtDisasterLt30:false, loanGe60DaysDLQ:false,
@@ -895,6 +918,167 @@ function calcApprovalTerms(optionName, l) {
     };
   }
 
+  // ── FNMA Forbearance Plan ──
+  if (opt === "FNMA Forbearance Plan") {
+    const end6mo = addMonths(effDate, 6);
+    const end12mo = addMonths(effDate, 12);
+    return {
+      "Authorized Initial Term": "Up to 6 months (servicer-authorized)",
+      "Authorized Extension": "Up to 6 additional months (total 12 months authorized)",
+      "FNMA Prior Approval Required If": "Cumulative term > 12 months OR loan > 12 months delinquent",
+      "Combined Forbearance + Repayment Plan Cap": "Must NOT exceed 36 months total",
+      "Payment During Plan": "Reduced or suspended per plan agreement",
+      "Late Charges": "Must NOT accrue or be collected during active forbearance",
+      "6-Month End Date": fmtDate(end6mo),
+      "12-Month Maximum End Date": fmtDate(end12mo),
+      "Disaster Variant": "Up to 3 months without QRPC if FEMA-declared, <2mo DLQ at disaster, ≥1mo DLQ at eval",
+      "Post-Forbearance (QRPC not achieved)": "Evaluate → Payment Deferral; if ineligible → Flex Modification",
+      "Authority": "Fannie Mae Servicing Guide D2-3.2-01 (10/11/2023)",
+    };
+  }
+  // ── FNMA Repayment Plan ──
+  if (opt === "FNMA Repayment Plan") {
+    const monthlyContractual = n(l.currentPI) + escrow;
+    const maxMonthly = monthlyContractual > 0 ? monthlyContractual * 1.50 : null;
+    const brpRequired = dlqMonths > 3;
+    return {
+      "Maximum Monthly Payment": maxMonthly != null ? `${fmt$(maxMonthly)} (150% of contractual ${fmt$(monthlyContractual)})` : "Enter current P&I and escrow",
+      "BRP Required?": brpRequired ? "✅ Yes — >90 days DLQ or plan >6 months" : "Not required (≤90 DLQ and plan ≤6 months; verify capacity via QRPC)",
+      "Plan Duration": brpRequired ? "Plan >12 months requires FNMA prior written approval" : "Up to 6 months (servicer-authorized)",
+      "Combined Forbearance + Repayment Plan Cap": "Must NOT exceed 36 months total",
+      "Late Charges (During Plan)": "Must be WAIVED upon successful completion",
+      "Late Charges (At Plan Establishment)": "May be included in plan repayment amounts",
+      "Post-Failed Repayment Plan": "Evaluate → Payment Deferral; if ineligible → Flex Modification",
+      "Authority": "Fannie Mae Servicing Guide D2-3.2-02 (08/13/2025)",
+    };
+  }
+  // ── FNMA Payment Deferral ──
+  if (opt === "FNMA Payment Deferral") {
+    const deferMonths = Math.min(n(l.delinquencyMonths), 6);
+    const cumUsed = n(l.fnmaCumulativeDeferredMonths);
+    const cumRemaining = Math.max(0, 12 - cumUsed);
+    const effectiveDeferMonths = Math.min(deferMonths, cumRemaining);
+    return {
+      "Deferred Amount": fmt$(arrears),
+      "  → Past-Due P&I Payments": `Up to ${effectiveDeferMonths} months (delinquency: ${deferMonths}mo; cap remaining: ${cumRemaining}mo)`,
+      "  → Out-of-Pocket Escrow Advances": "Included (third-party advances paid prior to effective date)",
+      "  → Escrow Shortage": escShortage > 0 ? `${fmt$(escShortage)} — repaid over 60-month escrow analysis (NOT deferred)` : "None",
+      "Cumulative Cap": `${cumUsed} months used / 12-month lifetime cap (excludes disaster deferrals)`,
+      "Interest on Deferred Balance": "None — non-interest-bearing balance",
+      "Deferred Balance Due": "At maturity, sale/transfer, refinance, or payoff of interest-bearing UPB",
+      "First Payment After Deferral": "Full contractual monthly payment (no change to rate/term/other terms)",
+      "Late Charges": "All waived upon completion",
+      "Administrative Fees": "None",
+      "Post-Deferral Default Risk": "If 60-day DLQ within 6 months → evaluate for Flex Modification by 75th DLQ day",
+      "Authority": "Fannie Mae Servicing Guide D2-3.2-04 (08/13/2025)",
+    };
+  }
+  // ── FNMA Disaster Payment Deferral ──
+  if (opt === "FNMA Disaster Payment Deferral") {
+    const deferMonths = Math.min(n(l.delinquencyMonths), 12);
+    return {
+      "Deferred Amount": fmt$(arrears),
+      "  → Past-Due P&I Payments": `Up to ${deferMonths} months (disaster maximum: 12 months)`,
+      "  → Out-of-Pocket Escrow Advances": "Included (third-party advances paid prior to effective date)",
+      "  → Escrow Shortage": escShortage > 0 ? `${fmt$(escShortage)} — repaid over 60-month escrow analysis (NOT deferred)` : "None",
+      "vs. Standard Payment Deferral": "Disaster: up to 12mo deferred; 1–12mo DLQ eligible; no 12-month cumulative cap applied",
+      "Same-Disaster Restriction": "Loan may NOT receive a second disaster deferral for the same disaster event",
+      "Disaster Deferrals & Cumulative Cap": "Disaster deferrals do NOT count toward the 12-month non-disaster cumulative cap",
+      "Interest on Deferred Balance": "None — non-interest-bearing balance",
+      "Deferred Balance Due": "At maturity, sale/transfer, refinance, or payoff of interest-bearing UPB",
+      "First Payment After Deferral": "Full contractual monthly payment",
+      "Late Charges": "All waived upon completion",
+      "Administrative Fees": "None",
+      "Authority": "Fannie Mae Servicing Guide D2-3.2-05 (08/13/2025)",
+    };
+  }
+  // ── Fannie Mae Flex Modification ──
+  if (opt === "Fannie Mae Flex Modification" || opt === "Fannie Mae Flex Modification (Disaster)") {
+    // Flex Mod: arrearages + legal fees capitalized; escrow shortage NOT capitalized
+    const flexNewUPB = upb + arrears + legal;
+    const currentPI_val = n(l.currentPI);
+    const floorRate = pmms > 0 ? Math.max(pmms - 0.50, 4.625) : 4.625;
+    // Step 1: Re-amortize at current rate for remaining term
+    const step1PI = remainingTerm && currentRate > 0 && flexNewUPB > 0 ? calcMonthlyPI(flexNewUPB, currentRate, remainingTerm) : null;
+    // Step 2: Rate reduced to floor rate, same remaining term
+    const step2PI = remainingTerm && floorRate > 0 && flexNewUPB > 0 ? calcMonthlyPI(flexNewUPB, floorRate, remainingTerm) : null;
+    // Step 3: Extend term to 480 months at floor rate
+    const step3PI = floorRate > 0 && flexNewUPB > 0 ? calcMonthlyPI(flexNewUPB, floorRate, 480) : null;
+    // Target: pre-mod P&I (for ≥31 DLQ must be ≤; conceptually target 20% reduction)
+    const targetPI20 = currentPI_val > 0 ? currentPI_val * 0.80 : null;
+    // Determine which step meets the target (20% reduction benchmark)
+    let stepApplied = "", achievedRate = currentRate, achievedTerm = remainingTerm || 360, achievedPI = step1PI;
+    if (step1PI != null && targetPI20 != null && step1PI <= targetPI20) {
+      stepApplied = "Step 1: Re-amortize at current rate — target met";
+      achievedRate = currentRate; achievedTerm = remainingTerm || 360; achievedPI = step1PI;
+    } else if (step2PI != null && targetPI20 != null && step2PI <= targetPI20) {
+      stepApplied = "Step 2: Rate reduced to floor rate — target met";
+      achievedRate = floorRate; achievedTerm = remainingTerm || 360; achievedPI = step2PI;
+    } else {
+      stepApplied = step3PI != null ? "Step 3: Term extended to 480 months at floor rate" : "Steps 1–3 attempted";
+      achievedRate = floorRate; achievedTerm = 480; achievedPI = step3PI;
+    }
+    const achievedPITI = achievedPI != null ? achievedPI + escrow : null;
+    const piReductionPct = currentPI_val > 0 && achievedPI != null ? (currentPI_val - achievedPI) / currentPI_val * 100 : null;
+    const newMat480 = noteFirstPmt ? addMonths(noteFirstPmt, 480) : null;
+    const newMatStd = addMonths(effDate, achievedTerm);
+    const newMaturity = achievedTerm === 480 ? newMat480 : newMatStd;
+    const tppMonths = dlqMonths >= 1 ? "3-month TPP (31+ days DLQ)" : "4-month TPP (current or <31 DLQ)";
+    return {
+      "Modification Type": "Fannie Mae Flex Modification — Fixed Rate",
+      "Step Applied": stepApplied || "Enter loan data for step analysis",
+      "Capitalized Amount": fmt$(arrears + legal),
+      "  → Arrearages": fmt$(arrears),
+      "  → Legal Fees": fmt$(legal),
+      "  → Escrow Shortage (EXCLUDED)": escShortage > 0 ? `${fmt$(escShortage)} — NOT capitalized per D2-3.2-06` : "None",
+      "  → Late Fees (EXCLUDED)": lateFees > 0 ? `${fmt$(lateFees)} — NOT capitalized` : "None",
+      "New UPB": fmt$(flexNewUPB),
+      "Floor Rate (max of PMMS−50bps or 4.625%)": pmms > 0 ? fmtPct(floorRate) : "Enter PMMS rate",
+      "New Interest Rate": achievedRate > 0 ? fmtPct(achievedRate) : "N/A",
+      "New Term": achievedTerm ? `${achievedTerm} months (${(achievedTerm/12).toFixed(1)} years)` : "N/A",
+      "New Monthly P&I": fmt$(achievedPI),
+      "New Monthly Escrow": fmt$(escrow || null),
+      "New Monthly PITI": fmt$(achievedPITI),
+      "P&I Reduction": piReductionPct != null ? `${piReductionPct.toFixed(1)}% (${fmt$(currentPI_val)} → ${fmt$(achievedPI)})` : "Enter current P&I",
+      "P&I Reduction ≥ 20%?": piReductionPct != null ? (piReductionPct >= 20 ? `✅ Yes — ${piReductionPct.toFixed(1)}%` : `❌ No — ${piReductionPct.toFixed(1)}% (principal forbearance may be required if MTMLTV > 100%)`) : "Enter current P&I",
+      "New Maturity Date": fmtDate(newMaturity),
+      "New First Payment Date": fmtDate(newFirstPmt),
+      "Trial Period Plan": tppMonths,
+      "Escrow Shortage": escShortage > 0 ? `${fmt$(escShortage)} — spread over 60-month escrow analysis (not capitalized)` : "None",
+      "Late Charges": "May be assessed during TPP; ALL waived upon permanent modification",
+      "Authority": `Fannie Mae Servicing Guide D2-3.2-06 (08/13/2025)${opt.includes("Disaster") ? " — Disaster Reduced Eligibility Criteria" : ""}`,
+    };
+  }
+  // ── Fannie Mae Short Sale ──
+  if (opt === "Fannie Mae Short Sale") {
+    const estNetValue = upb > 0 ? upb * 0.93 : null;
+    return {
+      "Outstanding UPB": fmt$(upb || null),
+      "Property Valuation": "Required — BPO or appraisal ordered by servicer per FNMA guidelines",
+      "Estimated Minimum Net Proceeds": estNetValue != null ? `${fmt$(estNetValue)} (est. ~93% of UPB)` : "Enter UPB for estimate",
+      "Selling Costs Allowed": "Commission (up to 6%), title, transfer taxes, customary closing costs",
+      "Servicer Approval": "Servicer may approve within FNMA delegation; submit to FNMA if outside delegation",
+      "Subordinate Lien Payments": "Require FNMA prior written approval before paying subordinate lienholders",
+      "Borrower Relocation Assistance": "May be available per current FNMA guidelines",
+      "Deficiency": "Servicer may release borrower from deficiency per FNMA guidelines",
+      "Authority": "Fannie Mae Servicing Guide D2-3.3-01 (08/13/2025)",
+    };
+  }
+  // ── Fannie Mae Mortgage Release (DIL) ──
+  if (opt === "Fannie Mae Mortgage Release (DIL)") {
+    return {
+      "Outstanding UPB": fmt$(upb || null),
+      "Property Valuation": "Required — BPO or appraisal per FNMA guidelines",
+      "Title Requirement": "Clear title — junior liens must be cleared or subordinated prior to conveyance",
+      "Property Condition": "Broom-swept, undamaged, ready for sale; borrower must vacate prior to conveyance",
+      "Relocation Assistance": "May be available per current FNMA guidelines",
+      "Deficiency": "Borrower released from personal deficiency upon FNMA acceptance of deed",
+      "Subordinate Lien Payments": "Require FNMA prior written approval before paying subordinate lienholders",
+      "Servicer Approval": "Submit to FNMA for approval; limited servicer delegation for DIL",
+      "Authority": "Fannie Mae Servicing Guide D2-3.3-02",
+    };
+  }
+
   return { "Note": "Calculated terms not available for this option. See program guidelines." };
 }
 
@@ -987,6 +1171,148 @@ function evaluateVA(l) {
   return results;
 }
 
+function evaluateFNMA(l) {
+  const results = [];
+  const dlq = n(l.delinquencyMonths);
+  const loanAge = n(l.fnmaLoanAge);
+  const priorModCount = n(l.fnmaPriorModCount);
+  const cumulativeDeferred = n(l.fnmaCumulativeDeferredMonths);
+  const priorDeferralMonths = n(l.fnmaPriorDeferralMonths);
+  const dlqAtDisaster = n(l.fnmaDelinquencyAtDisaster);
+  const propertyOK = l.propertyCondition !== "Condemned" && !l.occupancyAbandoned;
+  const commonBlockers = [
+    node("No recourse/indemnification with FNMA", l.fnmaRecourseArrangement?"Yes":"No", !l.fnmaRecourseArrangement),
+    node("No approved liquidation option active", l.fnmaActiveLiquidation?"Active":"None", !l.fnmaActiveLiquidation),
+    node("No active/performing repayment plan", l.fnmaActiveRepayPlan?"Active":"None", !l.fnmaActiveRepayPlan),
+    node("No pending workout option offer", l.fnmaActivePendingOffer?"Pending":"None", !l.fnmaActivePendingOffer),
+    node("No active/performing modification TPP", l.fnmaActiveTPP?"Active":"None", !l.fnmaActiveTPP),
+  ];
+  // ── 1. Forbearance Plan (D2-3.2-01) ──────────────────────────────────────────
+  {
+    const isPrincipalRes = l.fnmaPropertyType === "Principal Residence";
+    const isDisasterOK = l.fnmaDisasterHardship; // disaster: 2nd home/investment OK
+    const eligPropType = isPrincipalRes || isDisasterOK;
+    const nodes = [
+      node("Eligible hardship", l.hardshipType, l.hardshipType !== "None"),
+      node("Property type eligible", l.fnmaPropertyType, eligPropType, isPrincipalRes?"":"(disaster: 2nd home/investment OK)"),
+      node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
+    ];
+    results.push({ option:"FNMA Forbearance Plan", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 2. Repayment Plan (D2-3.2-02) ────────────────────────────────────────────
+  {
+    const nodes = [
+      node("Hardship appears resolved (temporary, no longer a problem)", l.fnmaHardshipResolved?"Yes":"No", l.fnmaHardshipResolved),
+      node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
+    ];
+    results.push({ option:"FNMA Repayment Plan", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 3. Payment Deferral (D2-3.2-04) ──────────────────────────────────────────
+  {
+    const eligLienPos = l.lienPosition === "First";
+    const eligLoanAge = loanAge >= 12;
+    const eligDlqRange = dlq >= 2 && dlq <= 6;
+    const eligCumCap = cumulativeDeferred < 12;
+    const eligPriorDeferral = priorDeferralMonths === 0 || priorDeferralMonths >= 12;
+    const eligNotNearMaturity = !l.fnmaWithin36MonthsMaturity;
+    const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
+    const nodes = [
+      node("Conventional 1st lien", l.lienPosition, eligLienPos),
+      node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
+      node("DLQ 2–6 months at evaluation", dlq+"mo", eligDlqRange),
+      node("Hardship resolved", l.fnmaHardshipResolved?"Yes":"No", l.fnmaHardshipResolved),
+      node("Can resume full contractual payment", l.fnmaCanResumeFull?"Yes":"No", l.fnmaCanResumeFull),
+      node("Cannot reinstate or afford repayment plan", l.fnmaCannotReinstate?"Yes":"No", l.fnmaCannotReinstate),
+      node("Cumulative deferred months < 12 (lifetime)", cumulativeDeferred+"mo", eligCumCap),
+      node("Prior non-disaster deferral ≥ 12 months ago (or never)", priorDeferralMonths===0?"None":priorDeferralMonths+"mo ago", eligPriorDeferral),
+      node("Not within 36 months of maturity", l.fnmaWithin36MonthsMaturity?"Within 36mo":"OK", eligNotNearMaturity),
+      node("No failed Flex Mod TPP within 12 months", l.fnmaFailedTPP12Months?"Yes":"No", eligNoFailedTPP),
+      ...commonBlockers,
+    ];
+    results.push({ option:"FNMA Payment Deferral", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 4. Disaster Payment Deferral (D2-3.2-05) ─────────────────────────────────
+  {
+    const eligDisaster = l.fnmaDisasterHardship;
+    const eligFEMA = l.fnmaFEMADesignation || l.fnmaInsuredLoss;
+    const eligLienPos = l.lienPosition === "First";
+    const eligDlqAtDisaster = dlqAtDisaster < 2;
+    const eligDlqRange = dlq >= 1 && dlq <= 12;
+    const eligNotSameDisaster = !l.fnmaSameDlisasterPriorDeferral;
+    const eligNotNearMaturity = !l.fnmaWithin36MonthsMaturity;
+    const nodes = [
+      node("Disaster-related hardship", l.fnmaDisasterHardship?"Yes":"No", eligDisaster),
+      node("FEMA designation or insured property loss", (l.fnmaFEMADesignation||l.fnmaInsuredLoss)?"Yes":"No", eligFEMA),
+      node("Conventional 1st lien", l.lienPosition, eligLienPos),
+      node("DLQ at time of disaster < 2 months", dlqAtDisaster+"mo", eligDlqAtDisaster),
+      node("Current DLQ 1–12 months at evaluation", dlq+"mo", eligDlqRange),
+      node("Hardship resolved", l.fnmaHardshipResolved?"Yes":"No", l.fnmaHardshipResolved),
+      node("Can resume full contractual payment", l.fnmaCanResumeFull?"Yes":"No", l.fnmaCanResumeFull),
+      node("Cannot reinstate or afford repayment plan", l.fnmaCannotReinstate?"Yes":"No", l.fnmaCannotReinstate),
+      node("No prior deferral for this same disaster event", l.fnmaSameDlisasterPriorDeferral?"Yes":"No", eligNotSameDisaster),
+      node("Not within 36 months of maturity", l.fnmaWithin36MonthsMaturity?"Within 36mo":"OK", eligNotNearMaturity),
+      ...commonBlockers,
+    ];
+    results.push({ option:"FNMA Disaster Payment Deferral", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 5. Fannie Mae Flex Modification — Standard (D2-3.2-06) ───────────────────
+  {
+    const eligLienPos = l.lienPosition === "First";
+    const eligLoanAge = loanAge >= 12;
+    const eligDLQ = dlq >= 2 || l.fnmaImminentDefault;
+    const eligPriorMods = priorModCount < 3;
+    const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
+    const eligNoReDefault = !l.fnmaReDefaulted12Months;
+    const nodes = [
+      node("Conventional 1st lien", l.lienPosition, eligLienPos),
+      node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
+      node("≥ 60 days DLQ OR servicer imminent default determination", dlq+"mo"+(l.fnmaImminentDefault?" (imminent default)":""), eligDLQ),
+      node("Prior modifications < 3 (payment deferrals excluded)", priorModCount, eligPriorMods),
+      node("No failed Flex Mod TPP within 12 months", l.fnmaFailedTPP12Months?"Yes":"No", eligNoFailedTPP),
+      node("No 60-day re-default within 12mo of last Flex Mod", l.fnmaReDefaulted12Months?"Yes":"No", eligNoReDefault),
+      ...commonBlockers,
+    ];
+    results.push({ option:"Fannie Mae Flex Modification", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 6. Fannie Mae Flex Modification — Disaster (D2-3.2-06) ───────────────────
+  {
+    const eligDisaster = l.fnmaDisasterHardship;
+    const eligFEMA = l.fnmaFEMADesignation || l.fnmaInsuredLoss;
+    const eligLienPos = l.lienPosition === "First";
+    const eligDlqAtDisaster = dlqAtDisaster < 2;
+    const eligCurrentDLQ = dlq >= 3;
+    const nodes = [
+      node("Disaster-related hardship", l.fnmaDisasterHardship?"Yes":"No", eligDisaster),
+      node("FEMA designation or insured property loss", (l.fnmaFEMADesignation||l.fnmaInsuredLoss)?"Yes":"No", eligFEMA),
+      node("Conventional 1st lien", l.lienPosition, eligLienPos),
+      node("DLQ at time of disaster < 2 months", dlqAtDisaster+"mo", eligDlqAtDisaster),
+      node("Current DLQ ≥ 3 months", dlq+"mo", eligCurrentDLQ),
+      ...commonBlockers,
+    ];
+    results.push({ option:"Fannie Mae Flex Modification (Disaster)", eligible:nodes.every(nd=>nd.pass), nodes, note:"Reduced eligibility criteria — prior mod count, failed TPP, and re-default restrictions may not apply" });
+  }
+  // ── 7. Fannie Mae Short Sale (D2-3.3-01) ─────────────────────────────────────
+  {
+    const eligIntent = !l.borrowerIntentRetention;
+    const nodes = [
+      node("Borrower intent = Disposition (not retention)", l.borrowerIntentRetention?"Retain":"Dispose", eligIntent),
+      node("Eligible hardship", l.hardshipType, l.hardshipType !== "None"),
+    ];
+    results.push({ option:"Fannie Mae Short Sale", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 8. Fannie Mae Mortgage Release / DIL (D2-3.3-02) ─────────────────────────
+  {
+    const eligIntent = !l.borrowerIntentRetention;
+    const nodes = [
+      node("Borrower intent = Disposition", l.borrowerIntentRetention?"Retain":"Dispose", eligIntent),
+      node("Eligible hardship", l.hardshipType, l.hardshipType !== "None"),
+      node("Meets Mortgage Release requirements", l.meetsDILRequirements?"Yes":"No", l.meetsDILRequirements),
+    ];
+    results.push({ option:"Fannie Mae Mortgage Release (DIL)", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  return results;
+}
+
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
 const Sec=({title,children})=>(<div className="mb-5"><div className="flex items-center gap-2 mb-3"><div className="h-3.5 w-0.5 rounded-full bg-blue-400"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span></div><div className="space-y-2.5">{children}</div></div>);
 const F=({label,children})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label>{children}</div>);
@@ -1063,8 +1389,9 @@ export default function App() {
   const [evaluated2,setEvaluated2]=useState(false);
   const set=useCallback((k,v)=>{setLoan(p=>({...p,[k]:v}));setEvaluated(false);},[]);
   const set2=useCallback((k,v)=>{setLoan2(p=>({...p,[k]:v}));setEvaluated2(false);},[]);
-  const evaluate=()=>{const res=loan.loanType==="FHA"?evaluateFHA(loan):loan.loanType==="USDA"?evaluateUSDA(loan):evaluateVA(loan);setResults(res);setEvaluated(true);setTab("results");setAiResponse("");};
-  const evaluate2=()=>{const res=loan2.loanType==="FHA"?evaluateFHA(loan2):loan2.loanType==="USDA"?evaluateUSDA(loan2):evaluateVA(loan2);setResults2(res);setEvaluated2(true);};
+  const evalLoan=(l)=>l.loanType==="FHA"?evaluateFHA(l):l.loanType==="USDA"?evaluateUSDA(l):l.loanType==="VA"?evaluateVA(l):evaluateFNMA(l);
+  const evaluate=()=>{setResults(evalLoan(loan));setEvaluated(true);setTab("results");setAiResponse("");};
+  const evaluate2=()=>{setResults2(evalLoan(loan2));setEvaluated2(true);};
   const eligible=results.filter(r=>r.eligible), ineligible=results.filter(r=>!r.eligible);
   const gmi=n(loan.grossMonthlyIncome);
   const target31=gmi>0?(gmi*0.31).toFixed(2):null;
@@ -1114,7 +1441,7 @@ export default function App() {
             <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center text-lg shadow-lg shadow-blue-900/50">🚀</div>
             <div>
               <h1 className="text-lg font-black tracking-tight">Rocket Mods</h1>
-              <p className="text-blue-300 text-xs font-medium">FHA · USDA · VA Loss Mitigation Rules Engine</p>
+              <p className="text-blue-300 text-xs font-medium">FHA · USDA · VA · FNMA Loss Mitigation Rules Engine</p>
             </div>
           </div>
           <div className="flex items-center gap-1.5 bg-white/10 rounded-xl p-1 backdrop-blur-sm">
@@ -1316,6 +1643,40 @@ export default function App() {
                   <Tog label="DLQ ≤60 & Complete BRP = TRUE" value={loan.completeBRP} onChange={v=>set("completeBRP",v)}/>
                   <Tog label="DLQ ≥60 & Borrower Intent = Disposition" value={loan.borrowerIntentDisposition} onChange={v=>set("borrowerIntentDisposition",v)}/>
                   <Tog label="Prior Compromise Sale = FAILED" value={loan.priorWorkoutCompromiseSaleFailed} onChange={v=>set("priorWorkoutCompromiseSaleFailed",v)}/>
+                </Sec>
+              </>)}
+              {loan.loanType==="FNMA"&&(<>
+                <Sec title="FNMA – Loan Status">
+                  <F label="Loan Age (months since origination)"><Num value={loan.fnmaLoanAge} onChange={v=>set("fnmaLoanAge",v)} placeholder="e.g. 36"/></F>
+                  <F label="Property Type"><Sel value={loan.fnmaPropertyType} onChange={v=>set("fnmaPropertyType",v)} options={["Principal Residence","Second Home","Investment"]}/></F>
+                  <Tog label="Hardship resolved (temporary, no longer a problem)" value={loan.fnmaHardshipResolved} onChange={v=>set("fnmaHardshipResolved",v)}/>
+                  <Tog label="Can resume full contractual monthly payment" value={loan.fnmaCanResumeFull} onChange={v=>set("fnmaCanResumeFull",v)}/>
+                  <Tog label="Cannot reinstate or afford repayment plan" value={loan.fnmaCannotReinstate} onChange={v=>set("fnmaCannotReinstate",v)}/>
+                  <Tog label="Servicer imminent default determination" value={loan.fnmaImminentDefault} onChange={v=>set("fnmaImminentDefault",v)}/>
+                  <Tog label="Within 36 months of maturity or projected payoff" value={loan.fnmaWithin36MonthsMaturity} onChange={v=>set("fnmaWithin36MonthsMaturity",v)}/>
+                </Sec>
+                <Sec title="FNMA – Prior Workout History">
+                  <F label="Months since last non-disaster payment deferral (0 = never)"><Num value={loan.fnmaPriorDeferralMonths} onChange={v=>set("fnmaPriorDeferralMonths",v)} placeholder="0 = never"/></F>
+                  <F label="Cumulative months deferred (lifetime total)"><Num value={loan.fnmaCumulativeDeferredMonths} onChange={v=>set("fnmaCumulativeDeferredMonths",v)} placeholder="0"/></F>
+                  <F label="Prior modifications (count — deferrals excluded from count)"><Num value={loan.fnmaPriorModCount} onChange={v=>set("fnmaPriorModCount",v)} placeholder="0"/></F>
+                  <Tog label="Failed Flex Mod TPP within 12 months" value={loan.fnmaFailedTPP12Months} onChange={v=>set("fnmaFailedTPP12Months",v)}/>
+                  <Tog label="60+ day re-default within 12 months of last Flex Mod" value={loan.fnmaReDefaulted12Months} onChange={v=>set("fnmaReDefaulted12Months",v)}/>
+                </Sec>
+                <Sec title="FNMA – Active Status Blockers">
+                  <Tog label="Recourse/indemnification arrangement with FNMA" value={loan.fnmaRecourseArrangement} onChange={v=>set("fnmaRecourseArrangement",v)}/>
+                  <Tog label="Approved liquidation option active" value={loan.fnmaActiveLiquidation} onChange={v=>set("fnmaActiveLiquidation",v)}/>
+                  <Tog label="Active and performing repayment plan" value={loan.fnmaActiveRepayPlan} onChange={v=>set("fnmaActiveRepayPlan",v)}/>
+                  <Tog label="Current offer pending for another workout option" value={loan.fnmaActivePendingOffer} onChange={v=>set("fnmaActivePendingOffer",v)}/>
+                  <Tog label="Active and performing modification TPP" value={loan.fnmaActiveTPP} onChange={v=>set("fnmaActiveTPP",v)}/>
+                </Sec>
+                <Sec title="FNMA – Disaster">
+                  <Tog label="Disaster-related hardship" value={loan.fnmaDisasterHardship} onChange={v=>set("fnmaDisasterHardship",v)}/>
+                  {loan.fnmaDisasterHardship&&(<>
+                    <Tog label="Property in FEMA-Declared Disaster Area eligible for IA (or employer's location)" value={loan.fnmaFEMADesignation} onChange={v=>set("fnmaFEMADesignation",v)}/>
+                    <Tog label="Property experienced an insured loss" value={loan.fnmaInsuredLoss} onChange={v=>set("fnmaInsuredLoss",v)}/>
+                    <F label="DLQ at time of disaster (months — 0 = current)"><Num value={loan.fnmaDelinquencyAtDisaster} onChange={v=>set("fnmaDelinquencyAtDisaster",v)} placeholder="0"/></F>
+                    <Tog label="Already received deferral for this same disaster event" value={loan.fnmaSameDlisasterPriorDeferral} onChange={v=>set("fnmaSameDlisasterPriorDeferral",v)}/>
+                  </>)}
                 </Sec>
               </>)}
               <Sec title="Home Disposition">
