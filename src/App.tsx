@@ -1,12 +1,5 @@
-import { useState, useCallback, useMemo } from "react";
-
-// ─── AUTH ─────────────────────────────────────────────────────────────────────
-// Update entries below to add/remove authorized users
-const VALID_LOGINS:{[user:string]:string} = {
-  "jlawrence": "CMGRockets2025!",
-  "admin":     "RocketMods2025!",
-};
-const AUTH_KEY = "rocketmods_auth";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { supabase } from "./supabase";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LOAN_TYPES = ["FHA","USDA","VA","FNMA","FHLMC"];
@@ -1755,48 +1748,9 @@ function CalcTermsPanel({ optionName, loan }) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function App() {
-  const [loggedIn,setLoggedIn]=useState(()=>sessionStorage.getItem(AUTH_KEY)==="1");
-  const [loginUser,setLoginUser]=useState("");
-  const [loginPass,setLoginPass]=useState("");
-  const [loginErr,setLoginErr]=useState("");
-  const handleLogin=(e:React.FormEvent)=>{
-    e.preventDefault();
-    if (VALID_LOGINS[loginUser.trim()]===loginPass) {
-      sessionStorage.setItem(AUTH_KEY,"1");
-      setLoggedIn(true);
-    } else {
-      setLoginErr("Invalid username or password.");
-      setLoginPass("");
-    }
-  };
-  if (!loggedIn) return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 mb-4 shadow-lg">
-            <span className="text-2xl">🚀</span>
-          </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">Rocket Mods</h1>
-          <p className="text-slate-400 text-sm mt-1">Loss Mitigation Rules Engine</p>
-        </div>
-        <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Username</label>
-            <input autoFocus className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="Enter username" value={loginUser} onChange={e=>{setLoginUser(e.target.value);setLoginErr("");}}/>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Password</label>
-            <input type="password" className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent" placeholder="Enter password" value={loginPass} onChange={e=>{setLoginPass(e.target.value);setLoginErr("");}}/>
-          </div>
-          {loginErr&&<p className="text-red-400 text-xs font-medium">{loginErr}</p>}
-          <button type="submit" className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">Sign In</button>
-        </form>
-        <p className="text-center text-slate-600 text-xs mt-6">CMG Financial · Loss Mitigation</p>
-      </div>
-    </div>
-  );
+interface Profile { id:string; email:string; full_name:string; approved:boolean; role:string; }
 
+function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   const [loan,setLoan]=useState({
     ...initLoan,
     loanType:"FHA",
@@ -1833,6 +1787,26 @@ export default function App() {
   const [loan2,setLoan2]=useState({...initLoan,loanType:"VA"});
   const [results2,setResults2]=useState([]);
   const [evaluated2,setEvaluated2]=useState(false);
+  const [showAdmin,setShowAdmin]=useState(false);
+  const [pendingUsers,setPendingUsers]=useState<{id:string;email:string;full_name:string;requested_at:string}[]>([]);
+  const [adminMsg,setAdminMsg]=useState("");
+  useEffect(()=>{
+    if(showAdmin&&profile.role==="admin"){
+      supabase.rpc("get_pending_users").then(({data})=>setPendingUsers((data||[]) as any));
+    }
+  },[showAdmin]);
+  const approveUser=async(id:string)=>{
+    await supabase.rpc("approve_user",{target_id:id});
+    setPendingUsers(p=>p.filter(u=>u.id!==id));
+    setAdminMsg("User approved — they can now log in.");
+    setTimeout(()=>setAdminMsg(""),4000);
+  };
+  const denyUser=async(id:string)=>{
+    await supabase.rpc("deny_user",{target_id:id});
+    setPendingUsers(p=>p.filter(u=>u.id!==id));
+    setAdminMsg("Request denied and account removed.");
+    setTimeout(()=>setAdminMsg(""),4000);
+  };
   const set=useCallback((k,v)=>{setLoan(p=>({...p,[k]:v}));setEvaluated(false);},[]);
   const set2=useCallback((k,v)=>{setLoan2(p=>({...p,[k]:v}));setEvaluated2(false);},[]);
   const evalLoan=(l)=>l.loanType==="FHA"?evaluateFHA(l):l.loanType==="USDA"?evaluateUSDA(l):l.loanType==="VA"?evaluateVA(l):l.loanType==="FNMA"?evaluateFNMA(l):evaluateFHLMC(l);
@@ -1878,6 +1852,39 @@ export default function App() {
     w.document.close();w.print();
   };
 
+  if(showAdmin&&profile.role==="admin") return (
+    <div className="min-h-screen bg-slate-900 p-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-xl font-black text-white">User Access Requests</h2>
+            <p className="text-slate-400 text-sm mt-0.5">Approve or deny pending sign-up requests</p>
+          </div>
+          <button onClick={()=>setShowAdmin(false)} className="text-slate-400 hover:text-white text-sm px-3 py-1.5 rounded-lg border border-slate-700 hover:border-slate-500 transition-all">← Back to App</button>
+        </div>
+        {adminMsg&&<div className="bg-emerald-900/60 border border-emerald-700 text-emerald-300 text-sm px-4 py-3 rounded-xl mb-4">{adminMsg}</div>}
+        {pendingUsers.length===0
+          ? <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 text-center text-slate-400">No pending requests</div>
+          : <div className="space-y-3">
+              {pendingUsers.map(u=>(
+                <div key={u.id} className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-white font-semibold">{u.full_name||"—"}</p>
+                    <p className="text-slate-400 text-sm">{u.email}</p>
+                    <p className="text-slate-600 text-xs mt-0.5">Requested {new Date(u.requested_at).toLocaleDateString()}</p>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={()=>approveUser(u.id)} className="bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold px-4 py-2 rounded-lg transition-all">Approve</button>
+                    <button onClick={()=>denyUser(u.id)} className="bg-red-900/60 hover:bg-red-800 text-red-300 text-sm font-semibold px-4 py-2 rounded-lg transition-all">Deny</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+        }
+      </div>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-100">
       {/* ── Header ── */}
@@ -1894,7 +1901,8 @@ export default function App() {
             <div className="flex items-center gap-1.5 bg-white/10 rounded-xl p-1 backdrop-blur-sm">
               {LOAN_TYPES.map(t=>(<button key={t} onClick={()=>{set("loanType",t);setEvaluated(false);setResults([]);}} className={`px-4 py-1.5 rounded-lg text-sm font-black transition-all ${loan.loanType===t?"bg-white text-slate-900 shadow-md":"text-blue-200 hover:text-white hover:bg-white/10"}`}>{t}</button>))}
             </div>
-            <button onClick={()=>{sessionStorage.removeItem(AUTH_KEY);setLoggedIn(false);}} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all" title="Sign out">Sign out</button>
+            {profile.role==="admin"&&<button onClick={()=>setShowAdmin(p=>!p)} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all">Users</button>}
+            <button onClick={onSignOut} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all" title="Sign out">Sign out</button>
           </div>
         </div>
       </div>
@@ -2445,5 +2453,125 @@ export default function App() {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── AUTH GATE ────────────────────────────────────────────────────────────────
+export default function App() {
+  const [profile,setProfile]=useState<Profile|null>(null);
+  const [authReady,setAuthReady]=useState(false);
+  // screen: "login" | "signup" | "pending"
+  const [screen,setScreen]=useState<"login"|"signup"|"pending">("login");
+  const [email,setEmail]=useState("");
+  const [password,setPassword]=useState("");
+  const [fullName,setFullName]=useState("");
+  const [authErr,setAuthErr]=useState("");
+  const [authLoading,setAuthLoading]=useState(false);
+
+  // On mount: check if a session already exists
+  useEffect(()=>{
+    supabase.auth.getSession().then(async({data:{session}})=>{
+      if(session){
+        const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
+        if(data){ setProfile(data as Profile); }
+        else { setScreen("pending"); }
+      }
+      setAuthReady(true);
+    });
+    const {data:{subscription}}=supabase.auth.onAuthStateChange(async(_,session)=>{
+      if(!session){ setProfile(null); setScreen("login"); return; }
+      const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
+      if(data){ setProfile(data as Profile); }
+    });
+    return ()=>subscription.unsubscribe();
+  },[]);
+
+  const handleSignOut=async()=>{
+    await supabase.auth.signOut();
+    setProfile(null); setScreen("login"); setEmail(""); setPassword(""); setFullName("");
+  };
+
+  const handleLogin=async(e:React.FormEvent)=>{
+    e.preventDefault(); setAuthErr(""); setAuthLoading(true);
+    const {error}=await supabase.auth.signInWithPassword({email,password});
+    if(error){ setAuthErr(error.message); setAuthLoading(false); return; }
+    const session=(await supabase.auth.getSession()).data.session;
+    if(session){
+      const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
+      if(data){ setProfile(data as Profile); }
+      else { setScreen("pending"); }
+    }
+    setAuthLoading(false);
+  };
+
+  const handleSignUp=async(e:React.FormEvent)=>{
+    e.preventDefault(); setAuthErr(""); setAuthLoading(true);
+    const {data:signUpData,error}=await supabase.auth.signUp({email,password,options:{data:{full_name:fullName}}});
+    if(error){ setAuthErr(error.message); setAuthLoading(false); return; }
+    if(signUpData.user){
+      // Profile row is created by DB trigger; wait a moment then verify
+      await new Promise(r=>setTimeout(r,800));
+      setScreen("pending");
+    }
+    setAuthLoading(false);
+  };
+
+  const inputCls="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent";
+  const logo=(
+    <div className="text-center mb-8">
+      <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 mb-4 shadow-lg"><span className="text-2xl">🚀</span></div>
+      <h1 className="text-2xl font-black text-white tracking-tight">Rocket Mods</h1>
+      <p className="text-slate-400 text-sm mt-1">Loss Mitigation Rules Engine</p>
+    </div>
+  );
+  const shell=(content:React.ReactNode)=>(
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">{logo}{content}<p className="text-center text-slate-600 text-xs mt-6">CMG Financial · Loss Mitigation</p></div>
+    </div>
+  );
+
+  if(!authReady) return shell(<div className="text-center text-slate-400 py-8 text-sm">Loading…</div>);
+
+  if(profile){
+    if(!profile.approved) return shell(
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
+        <div className="text-3xl">⏳</div>
+        <p className="text-white font-semibold">Access Pending</p>
+        <p className="text-slate-400 text-sm">Your request for <strong className="text-slate-200">{profile.email}</strong> is awaiting admin approval. You'll be able to log in once approved.</p>
+        <button onClick={handleSignOut} className="text-slate-500 hover:text-slate-300 text-xs underline">Sign out</button>
+      </div>
+    );
+    return <MainApp profile={profile} onSignOut={handleSignOut}/>;
+  }
+
+  if(screen==="pending") return shell(
+    <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
+      <div className="text-3xl">✅</div>
+      <p className="text-white font-semibold">Request Submitted</p>
+      <p className="text-slate-400 text-sm">Your account is pending approval. An admin will review your request shortly.</p>
+      <button onClick={()=>{setScreen("login");setEmail("");setPassword("");setFullName("");}} className="text-slate-500 hover:text-slate-300 text-xs underline">Back to sign in</button>
+    </div>
+  );
+
+  if(screen==="signup") return shell(
+    <form onSubmit={handleSignUp} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
+      <p className="text-white font-bold text-sm">Request Access</p>
+      <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Full Name</label><input autoFocus className={inputCls} placeholder="Jane Smith" value={fullName} onChange={e=>{setFullName(e.target.value);setAuthErr("");}}/></div>
+      <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Work Email</label><input type="email" className={inputCls} placeholder="you@cmgfi.com" value={email} onChange={e=>{setEmail(e.target.value);setAuthErr("");}}/></div>
+      <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Password</label><input type="password" className={inputCls} placeholder="Create a password" value={password} onChange={e=>{setPassword(e.target.value);setAuthErr("");}}/></div>
+      {authErr&&<p className="text-red-400 text-xs font-medium">{authErr}</p>}
+      <button type="submit" disabled={authLoading} className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">{authLoading?"Submitting…":"Submit Request"}</button>
+      <button type="button" onClick={()=>{setScreen("login");setAuthErr("");}} className="w-full text-slate-400 hover:text-slate-200 text-xs py-1 transition-all">Already have access? Sign in</button>
+    </form>
+  );
+
+  return shell(
+    <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
+      <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Email</label><input autoFocus type="email" className={inputCls} placeholder="you@cmgfi.com" value={email} onChange={e=>{setEmail(e.target.value);setAuthErr("");}}/></div>
+      <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Password</label><input type="password" className={inputCls} placeholder="Enter password" value={password} onChange={e=>{setPassword(e.target.value);setAuthErr("");}}/></div>
+      {authErr&&<p className="text-red-400 text-xs font-medium">{authErr}</p>}
+      <button type="submit" disabled={authLoading} className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">{authLoading?"Signing in…":"Sign In"}</button>
+      <button type="button" onClick={()=>{setScreen("signup");setAuthErr("");}} className="w-full text-slate-400 hover:text-slate-200 text-xs py-1 transition-all">Don't have access? Request it →</button>
+    </form>
   );
 }
