@@ -2470,25 +2470,24 @@ export default function App() {
   const [authErr,setAuthErr]=useState("");
   const [authLoading,setAuthLoading]=useState(false);
 
-  // On mount: check if a session already exists
+  const loadProfile=async(userId:string)=>{
+    try {
+      const {data}=await supabase.from("profiles").select("*").eq("id",userId).single();
+      if(data){ setProfile(data as Profile); }
+      else { setScreen("pending"); }
+    } catch { setScreen("pending"); }
+  };
+
+  // On mount: check for existing session once
   useEffect(()=>{
-    supabase.auth.getSession().then(async({data:{session}})=>{
-      if(session){
-        const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
-        if(data){ setProfile(data as Profile); }
-        else { setScreen("pending"); }
-      }
-    }).catch(()=>{}).finally(()=>setAuthReady(true));
-    const {data:{subscription}}=supabase.auth.onAuthStateChange(async(_,session)=>{
-      if(!session){ setProfile(null); setScreen("login"); return; }
-      try {
-        const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
-        if(data){ setProfile(data as Profile); }
-        else { setScreen("pending"); }
-      } catch { setScreen("pending"); }
-    });
-    return ()=>subscription.unsubscribe();
+    supabase.auth.getSession().then(({data:{session}})=>{
+      if(session){ loadProfile(session.user.id); }
+      else { setAuthReady(true); }
+    }).catch(()=>setAuthReady(true));
   },[]);
+
+  // Once profile is loaded, mark auth as ready
+  useEffect(()=>{ if(profile) setAuthReady(true); },[profile]);
 
   const handleSignOut=async()=>{
     await supabase.auth.signOut();
@@ -2498,9 +2497,9 @@ export default function App() {
   const handleLogin=async(e:React.FormEvent)=>{
     e.preventDefault(); setAuthErr(""); setAuthLoading(true);
     try {
-      const {error}=await supabase.auth.signInWithPassword({email,password});
+      const {data,error}=await supabase.auth.signInWithPassword({email,password});
       if(error){ setAuthErr(error.message); }
-      // onAuthStateChange handles profile fetch and navigation
+      else if(data.user){ await loadProfile(data.user.id); setAuthReady(true); }
     } catch(e:any) {
       setAuthErr(e?.message||"Sign in failed.");
     } finally {
