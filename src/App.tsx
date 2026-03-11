@@ -2481,8 +2481,11 @@ export default function App() {
     }).catch(()=>{}).finally(()=>setAuthReady(true));
     const {data:{subscription}}=supabase.auth.onAuthStateChange(async(_,session)=>{
       if(!session){ setProfile(null); setScreen("login"); return; }
-      const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
-      if(data){ setProfile(data as Profile); }
+      try {
+        const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
+        if(data){ setProfile(data as Profile); }
+        else { setScreen("pending"); }
+      } catch { setScreen("pending"); }
     });
     return ()=>subscription.unsubscribe();
   },[]);
@@ -2494,15 +2497,15 @@ export default function App() {
 
   const handleLogin=async(e:React.FormEvent)=>{
     e.preventDefault(); setAuthErr(""); setAuthLoading(true);
-    const {error}=await supabase.auth.signInWithPassword({email,password});
-    if(error){ setAuthErr(error.message); setAuthLoading(false); return; }
-    const session=(await supabase.auth.getSession()).data.session;
-    if(session){
-      const {data}=await supabase.from("profiles").select("*").eq("id",session.user.id).single();
-      if(data){ setProfile(data as Profile); }
-      else { setScreen("pending"); }
+    try {
+      const {error}=await supabase.auth.signInWithPassword({email,password});
+      if(error){ setAuthErr(error.message); }
+      // onAuthStateChange handles profile fetch and navigation
+    } catch(e:any) {
+      setAuthErr(e?.message||"Sign in failed.");
+    } finally {
+      setAuthLoading(false);
     }
-    setAuthLoading(false);
   };
 
   const handleSignUp=async(e:React.FormEvent)=>{
