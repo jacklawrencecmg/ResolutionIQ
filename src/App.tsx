@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { supabase, supabaseConfigured } from "./supabase";
+import resolutionIQLogo from "../ResolutionIQ_logo.svg";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LOAN_TYPES = ["FHA","USDA","VA","FNMA","FHLMC"];
@@ -1802,18 +1803,17 @@ function evaluateFNMA(l) {
 }
 
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
-const Sec=({title,children})=>(<div className="mb-5"><div className="flex items-center gap-2 mb-3"><div className="h-3.5 w-0.5 rounded-full bg-blue-400"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span></div><div className="space-y-2.5">{children}</div></div>);
+const Sec=({title,children})=>(<div className="mb-5"><div className="flex items-center gap-2 mb-3"><div className="h-3.5 w-0.5 rounded-full bg-emerald-500"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span></div><div className="space-y-2.5">{children}</div></div>);
 const F=({label,children})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label>{children}</div>);
-const Sel=({value,onChange,options})=>(<select className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>);
-const Tog=({value,onChange,label})=>(<div className="flex items-center justify-between gap-3 py-0.5">{label&&<span className="text-xs text-slate-600 flex-1 leading-snug">{label}</span>}<button onClick={()=>onChange(!value)} className={`relative w-11 h-6 rounded-full transition-all duration-200 flex-shrink-0 focus:outline-none ${value?"bg-blue-500":"bg-slate-200"}`}><span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${value?"translate-x-5":"translate-x-0"}`}/></button></div>);
-const Num=({value,onChange,placeholder,prefix})=>(<div className="flex items-center border border-slate-200 rounded-lg overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-blue-400 focus-within:border-transparent transition-shadow">{prefix&&<span className="bg-slate-50 px-2.5 text-xs text-slate-400 border-r border-slate-200 py-2 font-bold">{prefix}</span>}<input type="number" min="0" step="any" className="flex-1 px-3 py-1.5 text-sm bg-white focus:outline-none" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/></div>);
-const DateInput=({value,onChange,label})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label><input type="date" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}/></div>);
+const Sel=({value,onChange,options})=>(<select className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>);
+const Tog=({value,onChange,label})=>(<div className="flex items-center justify-between gap-3 py-0.5">{label&&<span className="text-xs text-slate-600 flex-1 leading-snug">{label}</span>}<button onClick={()=>onChange(!value)} className={`relative w-11 h-6 rounded-full transition-all duration-200 flex-shrink-0 focus:outline-none ${value?"bg-emerald-600":"bg-slate-200"}`}><span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${value?"translate-x-5":"translate-x-0"}`}/></button></div>);
+const Num=({value,onChange,placeholder,prefix})=>(<div className="flex items-center border border-slate-200 rounded-lg overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-emerald-400 focus-within:border-transparent transition-shadow">{prefix&&<span className="bg-slate-50 px-2.5 text-xs text-slate-400 border-r border-slate-200 py-2 font-bold">{prefix}</span>}<input type="number" min="0" step="any" className="flex-1 px-3 py-1.5 text-sm bg-white focus:outline-none" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder}/></div>);
+const DateInput=({value,onChange,label})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label><input type="date" className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}/></div>);
 
 // ─── CALCULATED TERMS PANEL ───────────────────────────────────────────────────
-function CalcTermsPanel({ optionName, loan }) {
-  const terms = useMemo(() => calcApprovalTerms(optionName, loan), [optionName, loan]);
+function TermsTable({ optionName, terms }: { optionName: string; terms: Record<string, string> }) {
   return (
-    <div className="mt-3 rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+    <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm">
       <div className="bg-slate-700 text-white px-4 py-2 text-xs font-bold flex items-center gap-2">
         <span className="opacity-70">📋</span><span>Approval Terms — {optionName}</span>
       </div>
@@ -1833,6 +1833,32 @@ function CalcTermsPanel({ optionName, loan }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function CalcTermsPanel({ optionName, loan }) {
+  const terms = useMemo(() => calcApprovalTerms(optionName, loan), [optionName, loan]);
+  const comboTerms = useMemo(() => {
+    if (optionName === "FHA-HAMP Standalone Loan Modification" && String(terms["Target Payment Met?"]).startsWith("❌")) {
+      return calcApprovalTerms("FHA-HAMP Combo Loan Modification & Partial Claim", loan);
+    }
+    return null;
+  }, [optionName, terms, loan]);
+
+  return (
+    <div className="mt-3 space-y-3">
+      <TermsTable optionName={optionName} terms={terms} />
+      {comboTerms && (
+        <div>
+          <div className="flex items-center gap-2 px-1 py-2">
+            <div className="flex-1 h-px bg-emerald-200" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 whitespace-nowrap">↓ Next Step — 31% Target Not Met</span>
+            <div className="flex-1 h-px bg-emerald-200" />
+          </div>
+          <TermsTable optionName="FHA-HAMP Combo Loan Modification & Partial Claim" terms={comboTerms} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1978,28 +2004,28 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   return (
     <div className="min-h-screen bg-slate-100">
       {/* ── Header ── */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white px-6 py-4 shadow-xl">
+      <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-white px-6 py-4 shadow-xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center text-lg shadow-lg shadow-blue-900/50">🚀</div>
+            <img src={resolutionIQLogo} alt="ResolutionIQ" className="h-9 w-auto" />
             <div>
               <h1 className="text-lg font-black tracking-tight">ResolutionIQ</h1>
-              <p className="text-blue-300 text-xs font-medium">FHA · USDA · VA · FNMA · FHLMC Loss Mitigation Rules Engine</p>
+              <p className="text-emerald-300 text-xs font-medium">FHA · USDA · VA · FNMA · FHLMC Loss Mitigation Rules Engine</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 bg-white/10 rounded-xl p-1 backdrop-blur-sm">
-              {LOAN_TYPES.map(t=>(<button key={t} onClick={()=>{set("loanType",t);setEvaluated(false);setResults([]);}} className={`px-4 py-1.5 rounded-lg text-sm font-black transition-all ${loan.loanType===t?"bg-white text-slate-900 shadow-md":"text-blue-200 hover:text-white hover:bg-white/10"}`}>{t}</button>))}
+              {LOAN_TYPES.map(t=>(<button key={t} onClick={()=>{set("loanType",t);setEvaluated(false);setResults([]);}} className={`px-4 py-1.5 rounded-lg text-sm font-black transition-all ${loan.loanType===t?"bg-white text-slate-900 shadow-md":"text-emerald-200 hover:text-white hover:bg-white/10"}`}>{t}</button>))}
             </div>
-            {profile.role==="admin"&&<button onClick={()=>setShowAdmin(p=>!p)} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all">Users</button>}
-            <button onClick={onSignOut} className="text-blue-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all" title="Sign out">Sign out</button>
+            {profile.role==="admin"&&<button onClick={()=>setShowAdmin(p=>!p)} className="text-emerald-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all">Users</button>}
+            <button onClick={onSignOut} className="text-emerald-300 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all" title="Sign out">Sign out</button>
           </div>
         </div>
       </div>
       {/* ── Tab Bar ── */}
       <div className="bg-white border-b border-slate-200 shadow-sm px-6">
         <div className="max-w-7xl mx-auto flex items-center gap-1">
-          {TABS.map(t=>(<button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-xs font-bold transition-all border-b-2 -mb-px ${tab===t?"border-blue-500 text-blue-700":"border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"}`}>{TAB_LABELS[t]}</button>))}
+          {TABS.map(t=>(<button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-xs font-bold transition-all border-b-2 -mb-px ${tab===t?"border-emerald-600 text-emerald-700":"border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"}`}>{TAB_LABELS[t]}</button>))}
         </div>
       </div>
 
@@ -2022,7 +2048,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 <F label="Gross Monthly Income"><Num value={loan.grossMonthlyIncome} onChange={v=>set("grossMonthlyIncome",v)} placeholder="e.g. 5000" prefix="$"/></F>
                 <F label="Current Interest Rate (%)"><Num value={loan.currentInterestRate} onChange={v=>set("currentInterestRate",v)} placeholder="e.g. 6.5"/></F>
                 <F label="PMMS Rate (%)"><Num value={loan.pmmsRate} onChange={v=>set("pmmsRate",v)} placeholder="e.g. 7.1"/></F>
-                {gmi>0&&<div className="bg-blue-50 rounded p-2 text-xs text-blue-800 space-y-0.5 mt-1">
+                {gmi>0&&<div className="bg-emerald-50 rounded p-2 text-xs text-emerald-800 space-y-0.5 mt-1">
                   <div>31% GMI Target: <strong>${target31}/mo</strong></div>
                   <div>40% GMI Cap: <strong>${target40}/mo</strong></div>
                   {loan.currentPITI&&<div>PITI/GMI Ratio: <strong>{(n(loan.currentPITI)/gmi*100).toFixed(1)}%</strong></div>}
@@ -2042,7 +2068,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 {n(loan.arrearagesToCapitalize)>0&&<div className="bg-green-50 rounded p-2 text-xs text-green-800 mt-1 space-y-0.5">
                   <div>Total Capitalizable (arrears + legal): <strong>{fmt$(n(loan.arrearagesToCapitalize)+n(loan.legalFees))}</strong></div>
                   {n(loan.escrowAdvanceBalance)>0&&<div>Est. Payment Deferral Total: <strong>{fmt$(n(loan.arrearagesToCapitalize)+n(loan.escrowAdvanceBalance)-n(loan.suspenseBalance))}</strong></div>}
-                  {n(loan.suspenseBalance)>0&&<div className="text-blue-700">Suspense offset: <strong>−{fmt$(n(loan.suspenseBalance))}</strong></div>}
+                  {n(loan.suspenseBalance)>0&&<div className="text-emerald-700">Suspense offset: <strong>−{fmt$(n(loan.suspenseBalance))}</strong></div>}
                   <div className="text-red-600">Late fees excluded: <strong>{fmt$(n(loan.lateFees))}</strong></div>
                   {n(loan.originalUpb)>0&&<div>30% PC Cap: <strong>{fmt$(n(loan.originalUpb)*0.30)}</strong></div>}
                   {n(loan.originalUpb)>0&&<div>25% Arrearage Cap (VA): <strong>{fmt$(n(loan.originalUpb)*0.25)}</strong></div>}
@@ -2063,7 +2089,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   const origMat=loan.originalMaturityDate||calcOriginalMaturity(loan.noteFirstPaymentDate,loan.noteTerm);
                   const mat120=origMat?addMonths(origMat,120):null;
                   const newFirst=calcNewFirstPayment(loan.approvalEffectiveDate);
-                  return <div className="bg-purple-50 rounded p-2 text-xs text-purple-800 space-y-0.5 mt-1">
+                  return <div className="bg-emerald-50 rounded p-2 text-xs text-emerald-800 space-y-0.5 mt-1">
                     <div>Remaining Term: <strong>{rem} months</strong></div>
                     <div>360mo from mod: <strong>{fmtDate(mat360)}</strong></div>
                     <div>120mo past orig maturity: <strong>{fmtDate(mat120)}</strong></div>
@@ -2239,7 +2265,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <F label="Property Type"><Sel value={loan.fhlmcPropertyType} onChange={v=>set("fhlmcPropertyType",v)} options={["Primary Residence","Second Home","Investment Property"]}/></F>
                   <F label="FM Posted Modification Rate (%)"><Num value={loan.fhlmcPostedModRate} onChange={v=>set("fhlmcPostedModRate",v)} placeholder="e.g. 6.5"/></F>
                   <F label="Estimated Property Value"><Num value={loan.fhlmcPropertyValue} onChange={v=>set("fhlmcPropertyValue",v)} placeholder="e.g. 300000" prefix="$"/></F>
-                  {n(loan.fhlmcPropertyValue)>0&&n(loan.upb)>0&&<div className="bg-violet-50 rounded p-2 text-xs text-violet-800 space-y-0.5 mt-1">
+                  {n(loan.fhlmcPropertyValue)>0&&n(loan.upb)>0&&<div className="bg-teal-50 rounded p-2 text-xs text-teal-800 space-y-0.5 mt-1">
                     <div>Current MTMLTV: <strong>{(n(loan.upb)/n(loan.fhlmcPropertyValue)*100).toFixed(1)}%</strong></div>
                     <div>Post-Cap MTMLTV: <strong>{((n(loan.upb)+n(loan.arrearagesToCapitalize)+n(loan.legalFees))/n(loan.fhlmcPropertyValue)*100).toFixed(1)}%</strong></div>
                     <div className="text-slate-500">≥50% → rate relief eligible; &gt;50% → principal forbearance eligible</div>
@@ -2286,7 +2312,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 <Tog label="Outstanding debt uncurable" value={loan.outstandingDebtUncurable} onChange={v=>set("outstandingDebtUncurable",v)}/>
                 <Tog label="Meets Deed-in-Lieu requirements" value={loan.meetsDILRequirements} onChange={v=>set("meetsDILRequirements",v)}/>
               </Sec>
-              <button onClick={evaluate} className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-black py-3 rounded-xl text-sm mt-3 shadow-lg shadow-blue-200 transition-all active:scale-95">🔍 Evaluate Loan →</button>
+              <button onClick={evaluate} className="w-full bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white font-black py-3 rounded-xl text-sm mt-3 shadow-lg shadow-emerald-200 transition-all active:scale-95">🔍 Evaluate Loan →</button>
             </div>
           </div>
         )}
@@ -2335,7 +2361,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                     </button>
                     {expanded===`e${i}`&&(
                       <div className="px-4 pb-4 bg-white">
-                        {r.calc&&<div className="text-xs bg-blue-50 text-blue-700 rounded-lg px-3 py-2 mb-2 border border-blue-100">📊 {r.calc}</div>}
+                        {r.calc&&<div className="text-xs bg-emerald-50 text-emerald-700 rounded-lg px-3 py-2 mb-2 border border-emerald-100">📊 {r.calc}</div>}
                         <CalcTermsPanel optionName={r.option} loan={loan}/>
                       </div>
                     )}
@@ -2422,7 +2448,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <button onClick={printReport} className="bg-slate-800 hover:bg-slate-900 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-sm transition-all">🖨 Print</button>
                 </div>
                 <div className="grid grid-cols-5 gap-3 mb-5">
-                  {[["DLQ",loan.delinquencyMonths?loan.delinquencyMonths+"mo":"—","bg-orange-50 border-orange-200"],["UPB",loan.upb?fmt$(n(loan.upb)):"—","bg-blue-50 border-blue-200"],["GMI",gmi>0?"$"+Number(loan.grossMonthlyIncome).toLocaleString():"—","bg-purple-50 border-purple-200"],["31% Target",target31?"$"+target31:"—","bg-indigo-50 border-indigo-200"],["Eligible",eligible.length,eligible.length>0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"]].map(([k,v,cls])=>(<div key={k} className={`rounded-xl p-3 text-center border ${cls}`}><div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{k}</div><div className="font-black text-sm text-slate-800">{v}</div></div>))}
+                  {[["DLQ",loan.delinquencyMonths?loan.delinquencyMonths+"mo":"—","bg-orange-50 border-orange-200"],["UPB",loan.upb?fmt$(n(loan.upb)):"—","bg-emerald-50 border-emerald-200"],["GMI",gmi>0?"$"+Number(loan.grossMonthlyIncome).toLocaleString():"—","bg-teal-50 border-teal-200"],["31% Target",target31?"$"+target31:"—","bg-emerald-50 border-emerald-200"],["Eligible",eligible.length,eligible.length>0?"bg-emerald-50 border-emerald-200":"bg-red-50 border-red-200"]].map(([k,v,cls])=>(<div key={k} className={`rounded-xl p-3 text-center border ${cls}`}><div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{k}</div><div className="font-black text-sm text-slate-800">{v}</div></div>))}
                 </div>
                 <div className="mb-5">
                   <h3 className="font-black text-slate-700 mb-3 flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-emerald-500 text-white text-[10px] flex items-center justify-center font-black">✓</span> Eligible Options</h3>
@@ -2439,9 +2465,9 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <div><h3 className="font-black text-slate-800">🤖 AI Underwriting Assistant</h3><p className="text-xs text-slate-400 mt-0.5">Powered by Claude — expert waterfall analysis</p></div>
-                  <button onClick={askAI} disabled={aiLoading} className={`text-sm px-4 py-2 rounded-xl font-bold shadow-sm transition-all ${aiLoading?"bg-slate-200 text-slate-400 cursor-not-allowed":"bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white"}`}>{aiLoading?"⏳ Analyzing...":"✨ Get AI Analysis"}</button>
+                  <button onClick={askAI} disabled={aiLoading} className={`text-sm px-4 py-2 rounded-xl font-bold shadow-sm transition-all ${aiLoading?"bg-slate-200 text-slate-400 cursor-not-allowed":"bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white"}`}>{aiLoading?"⏳ Analyzing...":"✨ Get AI Analysis"}</button>
                 </div>
-                <div className="mb-4"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block mb-1.5">Anthropic API Key (not stored)</label><input type="password" className="border border-slate-200 rounded-xl px-3 py-2 text-sm w-full font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-ant-..."/></div>
+                <div className="mb-4"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block mb-1.5">Anthropic API Key (not stored)</label><input type="password" className="border border-slate-200 rounded-xl px-3 py-2 text-sm w-full font-mono shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="sk-ant-..."/></div>
                 {aiLoading&&<div className="text-sm text-slate-500 italic animate-pulse py-4 text-center">Analyzing loan data...</div>}
                 {aiResponse&&<div className="text-sm text-slate-800 whitespace-pre-wrap bg-slate-50 rounded-xl p-4 border border-slate-200 leading-relaxed">{aiResponse}</div>}
                 {!aiResponse&&!aiLoading&&<p className="text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-100">Enter your API key and click Analyze to get expert waterfall recommendations, documentation checklists, and compliance notes.</p>}
@@ -2459,7 +2485,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black">A</div>
+                    <div className="w-7 h-7 rounded-full bg-emerald-600 flex items-center justify-center text-white text-xs font-black">A</div>
                     <h3 className="font-bold text-slate-800">Loan A — {loan.loanType}</h3>
                   </div>
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${evaluated?"bg-emerald-100 text-emerald-700":"bg-slate-100 text-slate-400"}`}>{evaluated?`${eligible.length} eligible`:"Not evaluated"}</span>
@@ -2478,12 +2504,12 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 overflow-y-auto" style={{maxHeight:"60vh"}}>
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-violet-500 flex items-center justify-center text-white text-xs font-black">B</div>
+                    <div className="w-7 h-7 rounded-full bg-teal-600 flex items-center justify-center text-white text-xs font-black">B</div>
                     <h3 className="font-bold text-slate-800">Loan B — {loan2.loanType}</h3>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${evaluated2?"bg-emerald-100 text-emerald-700":"bg-slate-100 text-slate-400"}`}>{evaluated2?`${results2.filter(r=>r.eligible).length} eligible`:"Not evaluated"}</span>
-                    <button onClick={evaluate2} className="text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">Evaluate B</button>
+                    <button onClick={evaluate2} className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg font-semibold transition-colors">Evaluate B</button>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mb-2 mt-3"><div className="h-3.5 w-0.5 rounded-full bg-slate-300"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Loan Details</span></div>
@@ -2507,10 +2533,10 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 </div>
                 <div className="flex items-center gap-2 mb-2 mt-3"><div className="h-3.5 w-0.5 rounded-full bg-slate-300"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Loan Dates</span></div>
                 <div className="grid grid-cols-2 gap-2 mb-3">
-                  <div><label className="text-xs text-slate-500 mb-0.5 block">Note First Payment</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-400" value={loan2.noteFirstPaymentDate} onChange={e=>set2("noteFirstPaymentDate",e.target.value)}/></div>
+                  <div><label className="text-xs text-slate-500 mb-0.5 block">Note First Payment</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-emerald-400" value={loan2.noteFirstPaymentDate} onChange={e=>set2("noteFirstPaymentDate",e.target.value)}/></div>
                   <div><label className="text-xs text-slate-500 mb-0.5 block">Note Term (months)</label><Num value={loan2.noteTerm} onChange={v=>set2("noteTerm",v)} placeholder="360"/></div>
-                  <div><label className="text-xs text-slate-500 mb-0.5 block">Original Maturity</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-400" value={loan2.originalMaturityDate} onChange={e=>set2("originalMaturityDate",e.target.value)}/></div>
-                  <div><label className="text-xs text-slate-500 mb-0.5 block">Effective Date</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-400" value={loan2.approvalEffectiveDate} onChange={e=>set2("approvalEffectiveDate",e.target.value)}/></div>
+                  <div><label className="text-xs text-slate-500 mb-0.5 block">Original Maturity</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-emerald-400" value={loan2.originalMaturityDate} onChange={e=>set2("originalMaturityDate",e.target.value)}/></div>
+                  <div><label className="text-xs text-slate-500 mb-0.5 block">Effective Date</label><input type="date" className="border border-slate-200 rounded-lg px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-emerald-400" value={loan2.approvalEffectiveDate} onChange={e=>set2("approvalEffectiveDate",e.target.value)}/></div>
                 </div>
                 <div className="flex items-center gap-2 mb-2 mt-3"><div className="h-3.5 w-0.5 rounded-full bg-slate-300"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Eligibility Flags</span></div>
                 <div className="space-y-1">
@@ -2534,15 +2560,15 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 <div className="bg-gradient-to-r from-slate-800 to-slate-700 text-white px-5 py-3 flex items-center justify-between">
                   <span className="text-sm font-bold tracking-tight">Side-by-Side Comparison</span>
                   <div className="flex items-center gap-3 text-xs">
-                    <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center font-black text-[10px]">A</span><span className="text-slate-300">{aCount} eligible</span></span>
+                    <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center font-black text-[10px]">A</span><span className="text-slate-300">{aCount} eligible</span></span>
                     <span className="text-slate-500">vs</span>
-                    <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center font-black text-[10px]">B</span><span className="text-slate-300">{bCount} eligible</span></span>
+                    <span className="flex items-center gap-1.5"><span className="w-5 h-5 rounded-full bg-teal-600 flex items-center justify-center font-black text-[10px]">B</span><span className="text-slate-300">{bCount} eligible</span></span>
                   </div>
                 </div>
                 <div className="overflow-x-auto"><table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 border-b border-slate-200"><th className="text-left px-4 py-2.5 font-semibold text-slate-600">Option</th><th className="text-center px-4 py-2.5 w-28 text-blue-700 font-semibold">A ({loan.loanType})</th><th className="text-center px-4 py-2.5 w-28 text-violet-700 font-semibold">B ({loan2.loanType})</th><th className="text-center px-4 py-2.5 w-24 text-slate-500 font-semibold">Delta</th></tr></thead>
-                  <tbody>{all.map((opt,i)=>{const aV=a[opt],bV=b[opt];return(<tr key={i} className={`border-b border-slate-100 ${aV&&bV?"bg-emerald-50/60":(!aV&&!bV)?"":"bg-amber-50/60"}`}><td className="px-4 py-2.5 font-medium text-slate-700">{opt}</td><td className="px-4 py-2.5 text-center">{aV===undefined?"—":aV?<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-black text-[10px]">✓</span>:<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-600 font-black text-[10px]">✗</span>}</td><td className="px-4 py-2.5 text-center">{bV===undefined?"—":bV?<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-black text-[10px]">✓</span>:<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-600 font-black text-[10px]">✗</span>}</td><td className="px-4 py-2.5 text-center">{aV&&bV?<span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Both</span>:(!aV&&!bV)?<span className="text-slate-300">Neither</span>:(aV&&!bV)?<span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold">A only</span>:<span className="px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-semibold">B only</span>}</td></tr>);})}</tbody>
-                  <tfoot><tr className="bg-slate-50 border-t-2 border-slate-200"><td className="px-4 py-3 font-bold text-slate-700">Total Eligible</td><td className="px-4 py-3 text-center font-black text-blue-700 text-sm">{aCount}</td><td className="px-4 py-3 text-center font-black text-violet-700 text-sm">{bCount}</td><td className="px-4 py-3 text-center"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${aCount>bCount?"bg-blue-100 text-blue-700":bCount>aCount?"bg-violet-100 text-violet-700":"bg-slate-100 text-slate-500"}`}>{aCount>bCount?"A wins":bCount>aCount?"B wins":"Tied"}</span></td></tr></tfoot>
+                  <thead><tr className="bg-slate-50 border-b border-slate-200"><th className="text-left px-4 py-2.5 font-semibold text-slate-600">Option</th><th className="text-center px-4 py-2.5 w-28 text-emerald-700 font-semibold">A ({loan.loanType})</th><th className="text-center px-4 py-2.5 w-28 text-teal-700 font-semibold">B ({loan2.loanType})</th><th className="text-center px-4 py-2.5 w-24 text-slate-500 font-semibold">Delta</th></tr></thead>
+                  <tbody>{all.map((opt,i)=>{const aV=a[opt],bV=b[opt];return(<tr key={i} className={`border-b border-slate-100 ${aV&&bV?"bg-emerald-50/60":(!aV&&!bV)?"":"bg-amber-50/60"}`}><td className="px-4 py-2.5 font-medium text-slate-700">{opt}</td><td className="px-4 py-2.5 text-center">{aV===undefined?"—":aV?<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-black text-[10px]">✓</span>:<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-600 font-black text-[10px]">✗</span>}</td><td className="px-4 py-2.5 text-center">{bV===undefined?"—":bV?<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-black text-[10px]">✓</span>:<span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-600 font-black text-[10px]">✗</span>}</td><td className="px-4 py-2.5 text-center">{aV&&bV?<span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Both</span>:(!aV&&!bV)?<span className="text-slate-300">Neither</span>:(aV&&!bV)?<span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">A only</span>:<span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 font-semibold">B only</span>}</td></tr>);})}</tbody>
+                  <tfoot><tr className="bg-slate-50 border-t-2 border-slate-200"><td className="px-4 py-3 font-bold text-slate-700">Total Eligible</td><td className="px-4 py-3 text-center font-black text-emerald-700 text-sm">{aCount}</td><td className="px-4 py-3 text-center font-black text-teal-700 text-sm">{bCount}</td><td className="px-4 py-3 text-center"><span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${aCount>bCount?"bg-emerald-100 text-emerald-700":bCount>aCount?"bg-teal-100 text-teal-700":"bg-slate-100 text-slate-500"}`}>{aCount>bCount?"A wins":bCount>aCount?"B wins":"Tied"}</span></td></tr></tfoot>
                 </table></div>
               </div>);
             })()}
@@ -2620,9 +2646,7 @@ export default function App() {
   const inputCls="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent";
   const logo=(
     <div className="text-center mb-8">
-      <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 mb-4 shadow-lg"><span className="text-2xl">🚀</span></div>
-      <h1 className="text-2xl font-black text-white tracking-tight">ResolutionIQ</h1>
-      <p className="text-slate-400 text-sm mt-1">Loss Mitigation Rules Engine</p>
+      <img src={resolutionIQLogo} alt="ResolutionIQ" className="w-full max-w-xs mx-auto mb-2" />
     </div>
   );
   const shell=(content:React.ReactNode)=>(
