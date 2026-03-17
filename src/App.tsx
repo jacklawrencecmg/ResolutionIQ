@@ -833,7 +833,7 @@ function calcApprovalTerms(optionName, l) {
       "Monthly Catch-Up Amount": fmt$(catchUp),
       "Total Monthly Plan Payment (PITI + Catch-Up)": fmt$(totalPmt),
       "Late Fees During Plan": "NOT assessed while performing under Repayment Plan",
-      "Note": "Use FHLMC RPP Calculator to confirm eligible plan lengths and verify affordability",
+      "Note": "Servicer determines plan length; confirm affordability per VA M26-4 §5.02",
       "First Post-Plan Payment": fmtDate(addMonths(effDate, planMonths + 1)),
     };
   }
@@ -1682,7 +1682,7 @@ function evaluateVA(l) {
   // Base eligibility: first lien, not condemned, not abandoned, foreclosure NOT active
   const vb=l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&!l.foreclosureActive;
   // Pre-compute cap checks for 30-Year / Traditional mod eligibility gates
-  const origUpbVA = n(l.originalUpb) || n(l.upb);
+  const origUpbVA = n(l.originalUpb);
   const capAmtVA = n(l.arrearagesToCapitalize) + n(l.escrowShortage) + n(l.legalFees);
   const newUPBVA = n(l.upb) + capAmtVA;
   const vaArrearsPct = origUpbVA > 0 ? (capAmtVA / origUpbVA * 100) : null;
@@ -1701,7 +1701,7 @@ function evaluateVA(l) {
   // ── VA M26-4 Chapter 5 options — NOTE: Home Retention Waterfall (Appendix F) RESCINDED May 1, 2025 per Circular 26-25-2.
   //    Servicers must offer best option for borrower's circumstances per 38 C.F.R. §36.4319; preferred order still considered. ──
   // 1. Reinstatement — VA M26-4 §2.A: first option; borrower pays all arrears in one lump sum
-  results.push({option:"VA Reinstatement",eligible:vb&&rH&&dlqD>=1&&l.borrowerCanAffordReinstateOrRepay,nodes:[...vN,node("Hardship=Resolved",l.hardshipDuration,rH),node("DLQ>0",dlqD,dlqD>=1),node("Can afford reinstatement",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay)]});
+  results.push({option:"VA Reinstatement",eligible:vb&&dlqD>=1&&l.borrowerCanAffordReinstateOrRepay,nodes:[...vN,node("DLQ>0",dlqD,dlqD>=1),node("Can afford reinstatement",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay)]});
   // 2. Repayment Plan — resolved hardship, borrower can make regular payment + catch-up
   results.push({option:"VA Repayment Plan",eligible:vb&&rH&&dlqD>=30&&l.calculatedRPPGt0&&l.borrowerCanAffordReinstateOrRepay&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Hardship=Resolved",l.hardshipDuration,rH),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30),node("RPP Plans>0",l.calculatedRPPGt0,l.calculatedRPPGt0),node("Can afford RPP",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
   // 3. Special Forbearance — active/temporary hardship (Long Term, not Resolved and not Permanent)
@@ -1716,9 +1716,12 @@ function evaluateVA(l) {
   // 5. VASP — DISCONTINUED May 1, 2025 per Circular 26-25-2; no new submissions accepted
   results.push({option:"VASP (VA Partial Claim)",eligible:false,nodes:[node("Program status","Discontinued — VA rescinded VASP effective May 1, 2025 (Circular 26-25-2). No new submissions accepted.",false)],note:"VASP ended May 1, 2025. Use 40-Year Modification instead."});
   // 6. Disposition options
-  const ce=ltH&&vb&&((dlqD<=60&&l.completeBRP)||(dlqD>=60&&l.borrowerIntentDisposition));
-  results.push({option:"VA Compromise Sale",eligible:ce,nodes:[...vN,node("Long Term/Perm",l.hardshipDuration,ltH),node("DLQ/BRP/Disposition",ce,ce)]});
-  results.push({option:"VA Deed-in-Lieu",eligible:ce&&l.priorWorkoutCompromiseSaleFailed,nodes:[...vN,node("Long Term/Perm",l.hardshipDuration,ltH),node("Comp Sale criteria",ce,ce),node("Prior Comp Sale FAILED",l.priorWorkoutCompromiseSaleFailed,l.priorWorkoutCompromiseSaleFailed)]});
+  const vaDispositionIntent = !l.borrowerIntentRetention;
+  const vaDispositionBRP = dlqD<=60 ? l.completeBRP : true;
+  const ce=ltH&&vb&&vaDispositionIntent&&vaDispositionBRP&&((dlqD<=60&&l.completeBRP)||(dlqD>=60&&l.borrowerIntentDisposition));
+  const ceNodes=[...vN,node("Long Term/Perm hardship",l.hardshipDuration,ltH),node("Borrower intent = Disposition",vaDispositionIntent?"Disposition":"Retention — switch intent",vaDispositionIntent),node(dlqD<=60?"Complete BRP (DLQ≤60d)":"DLQ≥60d + Disposition intent",dlqD<=60?l.completeBRP:l.borrowerIntentDisposition,dlqD<=60?l.completeBRP:l.borrowerIntentDisposition)];
+  results.push({option:"VA Compromise Sale",eligible:ce,nodes:ceNodes});
+  results.push({option:"VA Deed-in-Lieu",eligible:ce&&l.priorWorkoutCompromiseSaleFailed,nodes:[...ceNodes,node("Prior Comp Sale FAILED",l.priorWorkoutCompromiseSaleFailed,l.priorWorkoutCompromiseSaleFailed)]});
   return results;
 }
 
