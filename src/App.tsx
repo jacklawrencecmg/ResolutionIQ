@@ -1353,7 +1353,7 @@ function calcApprovalTerms(optionName, l) {
     };
   }
   // ── Fannie Mae Flex Modification ──
-  if (opt === "Fannie Mae Flex Modification" || opt === "Fannie Mae Flex Modification (Disaster)") {
+  if (opt === "Fannie Mae Flex Modification" || opt === "Fannie Mae Flex Modification (Disaster)" || opt === "Fannie Mae Flex Modification (Streamlined)") {
     // Flex Mod: prior deferred balance + servicer UPB = SMDU pre-workout UPB; arrearages + legal fees capitalized; escrow shortage NOT capitalized
     const priorDeferredUPB = n(l.fnmaPriorDeferredUPB);
     const preWorkoutUPB = upb + priorDeferredUPB; // SMDU pre-workout UPB (servicer UPB + prior deferred balance)
@@ -1425,7 +1425,7 @@ function calcApprovalTerms(optionName, l) {
     const newMaturity = achievedTerm === 480 ? newMat480 : newMatStd;
     const tppMonths = dlqMonths >= 1 ? "3-month TPP (31+ days DLQ)" : "4-month TPP (current or <31 DLQ)";
     return {
-      "Modification Type": "Fannie Mae Flex Modification — Fixed Rate",
+      "Modification Type": `Fannie Mae Flex Modification${opt.includes("Streamlined") ? " (Streamlined — No BRP/Hardship Doc Required)" : opt.includes("Disaster") ? " (Disaster)" : ""} — Fixed Rate`,
       "Step Applied": stepApplied || "Enter loan data for step analysis",
       "Pre-Workout UPB": priorDeferredUPB > 0 ? `${fmt$(preWorkoutUPB)} (servicer UPB ${fmt$(upb)} + prior deferred ${fmt$(priorDeferredUPB)})` : fmt$(upb),
       "Capitalized Amount": fmt$(arrears + legal),
@@ -1901,6 +1901,26 @@ function evaluateFNMA(l) {
       ...commonBlockers,
     ];
     results.push({ option:"Fannie Mae Flex Modification", eligible:nodes.every(nd=>nd.pass), nodes });
+  }
+  // ── 5b. Fannie Mae Flex Modification — Streamlined (D2-3.2-06) ───────────────
+  // 90+ days DLQ; no BRP, hardship documentation, or income verification required
+  {
+    const eligLienPos = l.lienPosition === "First";
+    const eligLoanAge = loanAge >= 12;
+    const eligDLQ = dlq >= 3;
+    const eligPriorMods = priorModCount < 3;
+    const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
+    const eligNoReDefault = !l.fnmaReDefaulted12Months;
+    const nodes = [
+      node("Conventional 1st lien", l.lienPosition, eligLienPos),
+      node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
+      node("≥ 90 days (3 months) DLQ", dlq+"mo", eligDLQ),
+      node("Prior modifications < 3 (payment deferrals excluded)", priorModCount, eligPriorMods),
+      node("No failed Flex Mod TPP within 12 months", l.fnmaFailedTPP12Months?"Yes":"No", eligNoFailedTPP),
+      node("No 60-day re-default within 12mo of last Flex Mod", l.fnmaReDefaulted12Months?"Yes":"No", eligNoReDefault),
+      ...commonBlockers,
+    ];
+    results.push({ option:"Fannie Mae Flex Modification (Streamlined)", eligible:nodes.every(nd=>nd.pass), nodes, note:"No BRP, hardship documentation, or income verification required — 90+ days DLQ path per D2-3.2-06" });
   }
   // ── 6. Fannie Mae Flex Modification — Disaster (D2-3.2-06) ───────────────────
   {
