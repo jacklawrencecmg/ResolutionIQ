@@ -1523,17 +1523,20 @@ function node(q, a, pass) { return { question:q, answer:String(a), pass }; }
 // ─── ELIGIBILITY ENGINES ─────────────────────────────────────────────────────
 function evaluateFHA(l) {
   const results = [];
-  const dlq=n(l.delinquencyMonths), priorHAMP=n(l.priorFHAHAMPMonths), pcPct=n(l.partialClaimPct), gmi=n(l.grossMonthlyIncome);
-  const origUpbFHA = n(l.originalUpb) || n(l.upb);
+  const dlq=n(l.delinquencyMonths), priorHAMP=n(l.priorFHAHAMPMonths), gmi=n(l.grossMonthlyIncome);
+  // Issue 1 fix: only use explicitly entered Original UPB — never fall back to current UPB
+  const origUpbFHA = n(l.originalUpb);
+  const origUpbEntered = origUpbFHA > 0;
   const capAmtFHA = n(l.arrearagesToCapitalize) + n(l.escrowShortage) + n(l.legalFees);
   const newUPBFHA = n(l.upb) + capAmtFHA;
-  const upbWithinOrig = origUpbFHA === 0 || newUPBFHA <= origUpbFHA;
+  // 40-Year UPB check: only enforce when Original UPB is entered; otherwise warn
+  const upbWithinOrig = !origUpbEntered || newUPBFHA <= origUpbFHA;
+  const upbWithinOrigLabel = !origUpbEntered ? "Enter Original UPB to verify" : (newUPBFHA <= origUpbFHA ? `✅ ${newUPBFHA.toFixed(2)} ≤ ${origUpbFHA.toFixed(2)}` : `❌ ${newUPBFHA.toFixed(2)} > ${origUpbFHA.toFixed(2)}`);
+
   const baseNodes=[node("Occupancy=Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Foreclosure≠Active",!l.foreclosureActive,!l.foreclosureActive),node("Property≠Condemned/Uninhabitable",l.propertyCondition,l.propertyCondition!=="Condemned"&&l.propertyCondition!=="Uninhabitable"),node("Property=Principal Residence",l.propertyDisposition,l.propertyDisposition==="Principal Residence"),node("Lien=First",l.lienPosition,l.lienPosition==="First")];
   const baseEligible=baseNodes.every(nd=>nd.pass);
 
-  // ── Auto-compute whether 31% target is achievable via re-amortization ──
-  // Uses same math as calcApprovalTerms so eligibility always matches displayed terms.
-  // Falls back to manual toggle only when required inputs are missing.
+  // ── Auto-compute re-amortization achievability ────────────────────────────────
   const fhaPmms = n(l.pmmsRate);
   const fhaEscrow = n(l.currentEscrow);
   const fhaTarget = n(l.targetPayment) || (gmi > 0 ? gmi * 0.31 : 0);
@@ -1542,32 +1545,88 @@ function evaluateFHA(l) {
   const fhaPITI480 = fhaHasInputs ? (calcMonthlyPI(newUPBFHA, fhaPmms, 480) ?? 0) + fhaEscrow : null;
   const canAchieve360 = fhaPITI360 != null ? fhaPITI360 <= fhaTarget : l.canAchieveTargetByReamort;
   const canAchieve480 = fhaPITI480 != null ? fhaPITI480 <= fhaTarget : l.canAchieveTargetBy480Reamort;
-  const achieve360Label = fhaHasInputs
-    ? `PITI $${fhaPITI360!.toFixed(2)} ${canAchieve360?"≤":">"} target $${fhaTarget.toFixed(2)}`
-    : `Manual: ${canAchieve360?"Yes":"No"}`;
-  const achieve480Label = fhaHasInputs
-    ? `PITI $${fhaPITI480!.toFixed(2)} ${canAchieve480?"≤":">"} target $${fhaTarget.toFixed(2)}`
-    : `Manual: ${canAchieve480?"Yes":"No"}`;
+  const achieve360Label = fhaHasInputs ? `PITI $${fhaPITI360!.toFixed(2)} ${canAchieve360?"≤":">"} target $${fhaTarget.toFixed(2)}` : `Manual: ${canAchieve360?"Yes":"No"}`;
+  const achieve480Label = fhaHasInputs ? `PITI $${fhaPITI480!.toFixed(2)} ${canAchieve480?"≤":">"} target $${fhaTarget.toFixed(2)}` : `Manual: ${canAchieve480?"Yes":"No"}`;
+
+  // ── Issue 3+6 fix: auto-compute Combo achievability ───────────────────────────
+  // Combo achieves target when the PC deferral needed fits within remaining 30% cap.
+  const fhaMonthlyRate = fhaPmms > 0 ? fhaPmms / 100 / 12 : 0;
+  const targetPI_combo = fhaTarget > 0 && fhaEscrow >= 0 ? fhaTarget - fhaEscrow : null;
+  const targetUPB_combo = targetPI_combo != null && targetPI_combo > 0 && fhaMonthlyRate > 0
+    ? targetPI_combo * ((1 - Math.pow(1 + fhaMonthlyRate, -360)) / fhaMonthlyRate) : null;
+  const fhaPriorPC = n(l.priorPartialClaimBalance);
+  const fhaMaxPC = origUpbEntered ? origUpbFHA * 0.30 : (n(l.upb) * 0.30);
+  const fhaPCAvailable = Math.max(0, fhaMaxPC - fhaPriorPC);
+  const pcNeeded = targetUPB_combo != null ? Math.max(0, newUPBFHA - targetUPB_combo) : null;
+  // comboWithinCap: true = PC deferral fits within 30% cap (computed); null = can't determine
+  const comboWithinCap = pcNeeded != null ? pcNeeded <= fhaPCAvailable : null;
+  // Issue 6 fix: use computed cap check for Combo cok; fall back to manual pcPct only if inputs missing
+  const comboCapPass = comboWithinCap != null ? comboWithinCap : (n(l.partialClaimPct) <= 30);
+  const cok = comboCapPass || (l.arrearsExceed30PctLimit && l.modPaymentLe40PctGMI);
+  const comboCapLabel = comboWithinCap != null
+    ? `PC needed $${(pcNeeded??0).toFixed(2)} ${comboWithinCap?"≤":">"} available $${fhaPCAvailable.toFixed(2)}`
+    : `Manual: PC% ${n(l.partialClaimPct).toFixed(1)}% ${n(l.partialClaimPct)<=30?"≤":">"} 30%`;
+  // Issue 3 fix: 40-Year only when Combo also fails (or can't be determined)
+  // comboSufficient = Combo is confirmed achievable → 40-Year should not be primary path
+  const comboSufficient = comboWithinCap === true && !canAchieve360;
+
+  // ── Issue 2 fix: auto-compute Standalone PC checks ───────────────────────────
+  const fhaCurrentRate = n(l.currentInterestRate);
+  const fhaCurrentPITI = n(l.currentPITI);
+  const rateAtOrBelowMarket = fhaCurrentRate > 0 && fhaPmms > 0 ? fhaCurrentRate <= fhaPmms : l.currentRateAtOrBelowMarket;
+  const pitiAtOrBelowTarget = fhaCurrentPITI > 0 && fhaTarget > 0 ? fhaCurrentPITI <= fhaTarget : l.currentPITIAtOrBelowTarget;
+  const rateLabel = fhaCurrentRate > 0 && fhaPmms > 0 ? `${fhaCurrentRate.toFixed(4)}% ${rateAtOrBelowMarket?"≤":">"} PMMS ${fhaPmms.toFixed(4)}%` : `Manual: ${rateAtOrBelowMarket?"Yes":"No"}`;
+  const pitiLabel = fhaCurrentPITI > 0 && fhaTarget > 0 ? `PITI $${fhaCurrentPITI.toFixed(2)} ${pitiAtOrBelowTarget?"≤":">"} target $${fhaTarget.toFixed(2)}` : `Manual: ${pitiAtOrBelowTarget?"Yes":"No"}`;
+
+  // ── Issue 5: FHA Reinstatement ───────────────────────────────────────────────
+  results.push({option:"FHA Reinstatement",eligible:dlq>0,nodes:[node("Past-due amounts exist",dlq+"mo DLQ",dlq>0)],note:"Borrower pays all past-due P&I, escrow, fees, and charges to restore current status"});
 
   if (l.verifiedDisaster) {
     const dn=[...baseNodes,node("In PDMA",l.propertyInPDMA,l.propertyInPDMA),node("Principal Residence pre-disaster",l.principalResidencePreDisaster,l.principalResidencePreDisaster),node("DLQ<12mo",dlq,dlq<12),node("Not damaged OR repairs done",l.propertySubstantiallyDamaged?l.repairsCompleted:"N/A",!l.propertySubstantiallyDamaged||l.repairsCompleted)];
     const db=dn.every(nd=>nd.pass);
     results.push({option:"FHA Disaster Loan Modification",eligible:db&&canAchieve360&&(l.currentOrLe30DaysAtDisaster||l.incomeGePreDisaster||l.incomeDocProvided),nodes:[...dn,node("Target achievable by re-amortization",achieve360Label,canAchieve360),node("Income/DLQ condition",l.currentOrLe30DaysAtDisaster||l.incomeGePreDisaster||l.incomeDocProvided,l.currentOrLe30DaysAtDisaster||l.incomeGePreDisaster||l.incomeDocProvided)],note:!l.incomeDocProvided?"3-mo trial plan available":null});
-    results.push({option:"FHA Disaster Standalone Partial Claim",eligible:db&&!canAchieve360&&pcPct<=30,nodes:[...dn,node("Target NOT achievable by re-amortization",achieve360Label,!canAchieve360),node(`PC(${pcPct}%)≤30%`,pcPct,pcPct<=30)]});
+    results.push({option:"FHA Disaster Standalone Partial Claim",eligible:db&&!canAchieve360&&comboCapPass,nodes:[...dn,node("Target NOT achievable by re-amortization",achieve360Label,!canAchieve360),node("PC within 30% cap",comboCapLabel,comboCapPass)]});
   }
   const hb=baseEligible&&(priorHAMP===0||priorHAMP>=24)&&l.continuousIncome&&dlq>0&&STANDARD_HARDSHIPS.includes(l.hardshipType)&&l.borrowerIntentRetention;
   const hn=[...baseNodes,node("Std hardship",l.hardshipType,STANDARD_HARDSHIPS.includes(l.hardshipType)),node("Continuous income",l.continuousIncome,l.continuousIncome),node("DLQ>0",dlq,dlq>0),node("Prior HAMP≥24mo or none",priorHAMP===0?"None":priorHAMP+"mo",priorHAMP===0||priorHAMP>=24),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention)];
   results.push({option:"FHA-HAMP Standalone Loan Modification",eligible:hb&&canAchieve360,nodes:[...hn,node("Target achievable by 360mo re-amortization",achieve360Label,canAchieve360)],calc:gmi>0?`Target 31% GMI: $${(gmi*0.31).toFixed(2)}/mo`:null});
-  results.push({option:"FHA 40-Year Loan Modification",eligible:hb&&!canAchieve360&&canAchieve480&&upbWithinOrig,nodes:[...hn,node("Target NOT achievable in 360mo",achieve360Label,!canAchieve360),node("Target achievable by 480mo re-amortization",achieve480Label,canAchieve480),node("New UPB ≤ Original UPB (ML 2023-22)",upbWithinOrig?"Yes — required":"No — ineligible",upbWithinOrig)],note:"ML 2023-22 — eff. May 2024; rate=PMMS; term=480mo",calc:gmi>0?`Target 31% GMI: $${(gmi*0.31).toFixed(2)}/mo`:null});
-  results.push({option:"FHA-HAMP Standalone Partial Claim",eligible:hb&&l.currentRateAtOrBelowMarket&&l.currentPITIAtOrBelowTarget&&pcPct<=30,nodes:[...hn,node("Rate at/below market (no mod needed)",l.currentRateAtOrBelowMarket,l.currentRateAtOrBelowMarket),node("Current PITI at/below 31% target",l.currentPITIAtOrBelowTarget,l.currentPITIAtOrBelowTarget),node(`PC(${pcPct}%)≤30% of orig UPB`,pcPct,pcPct<=30)]});
-  const cok=pcPct<=30||(l.arrearsExceed30PctLimit&&l.modPaymentLe40PctGMI);
-  results.push({option:"FHA-HAMP Combo Loan Modification & Partial Claim",eligible:hb&&!canAchieve360&&cok,nodes:[...hn,node("Target NOT achievable by 360mo re-amortization",achieve360Label,!canAchieve360),node("PC≤30% OR 40% exception",cok,cok)],note:l.arrearsExceed30PctLimit&&l.modPaymentLe40PctGMI?"40% GMI exception applied":null,calc:gmi>0?`40% Cap: $${(gmi*0.40).toFixed(2)} | 31% Target: $${(gmi*0.31).toFixed(2)}`:null});
+  // Issue 6 fix: Combo uses computed cap check
+  results.push({option:"FHA-HAMP Combo Loan Modification & Partial Claim",eligible:hb&&!canAchieve360&&cok,nodes:[...hn,node("Target NOT achievable by 360mo re-amortization",achieve360Label,!canAchieve360),node("PC within cap OR 40% exception",comboCapLabel,cok)],note:l.arrearsExceed30PctLimit&&l.modPaymentLe40PctGMI?"40% GMI exception applied":null,calc:gmi>0?`40% Cap: $${(gmi*0.40).toFixed(2)} | 31% Target: $${(gmi*0.31).toFixed(2)}`:null});
+  // Issue 3 fix: 40-Year only when Combo also can't achieve target
+  results.push({option:"FHA 40-Year Loan Modification",eligible:hb&&!canAchieve360&&!comboSufficient&&canAchieve480&&upbWithinOrig,nodes:[...hn,node("Target NOT achievable in 360mo",achieve360Label,!canAchieve360),node("Combo Mod also insufficient (PC cap exhausted or uncomputable)",comboCapLabel,!comboSufficient),node("Target achievable by 480mo re-amortization",achieve480Label,canAchieve480),node("New UPB ≤ Original UPB (ML 2023-22)",upbWithinOrigLabel,upbWithinOrig)],note:"ML 2023-22 — eff. May 2024; rate=PMMS; term=480mo",calc:gmi>0?`Target 31% GMI: $${(gmi*0.31).toFixed(2)}/mo`:null});
+  // Issue 2 fix: Standalone PC uses auto-computed rate and PITI checks
+  results.push({option:"FHA-HAMP Standalone Partial Claim",eligible:hb&&rateAtOrBelowMarket&&pitiAtOrBelowTarget&&comboCapPass,nodes:[...hn,node("Current rate at/below market (PMMS)",rateLabel,rateAtOrBelowMarket),node("Current PITI at/below 31% target",pitiLabel,pitiAtOrBelowTarget),node("PC within 30% statutory cap",comboCapLabel,comboCapPass)]});
   results.push({option:"Payment Supplement",eligible:baseEligible&&!canAchieve360&&l.unemployed&&l.comboPaymentLe40PctIncome,nodes:[...baseNodes,node("Target NOT achievable by re-amortization",achieve360Label,!canAchieve360),node("Unemployed",l.unemployed,l.unemployed),node("Combo pmt≤40% GMI",l.comboPaymentLe40PctIncome,l.comboPaymentLe40PctIncome)]});
   results.push({option:"Repayment Plan",eligible:dlq<=12&&l.canRepayWithin24Months&&!l.failedTPP,nodes:[node("DLQ≤12mo",dlq,dlq<=12),node("Can repay 24mo",l.canRepayWithin24Months,l.canRepayWithin24Months),node("No failed TPP",!l.failedTPP,!l.failedTPP)]});
   results.push({option:"Formal Forbearance",eligible:dlq<12&&(l.canRepayWithin6Months||l.requestedForbearance),nodes:[node("DLQ<12mo",dlq,dlq<12),node("Repay 6mo OR requested",l.canRepayWithin6Months||l.requestedForbearance,l.canRepayWithin6Months||l.requestedForbearance)]});
   results.push({option:"Special Forbearance – Unemployment",eligible:dlq<=12&&!l.foreclosureActive&&l.hardshipType==="Unemployment"&&l.occupancyStatus==="Owner Occupied"&&l.propertyDisposition==="Principal Residence"&&l.verifiedUnemployment&&!l.continuousIncome&&l.ineligibleAllRetention&&!l.propertyListedForSale&&!l.assumptionInProcess,nodes:[node("DLQ≤12mo",dlq,dlq<=12),node("Hardship=Unemployment",l.hardshipType,l.hardshipType==="Unemployment"),node("Verified unemployment",l.verifiedUnemployment,l.verifiedUnemployment),node("No continuous income",!l.continuousIncome,!l.continuousIncome),node("Ineligible all retention",l.ineligibleAllRetention,l.ineligibleAllRetention),node("Not listed for sale",!l.propertyListedForSale,!l.propertyListedForSale),node("No assumption",!l.assumptionInProcess,!l.assumptionInProcess)]});
-  if (l.meetsPFSRequirements) results.push({option:"Pre-Foreclosure Sale (PFS)",eligible:true,nodes:[node("Meets PFS req","Yes",true)]});
-  if (l.outstandingDebtUncurable&&l.meetsDILRequirements) results.push({option:"Deed-in-Lieu (DIL)",eligible:true,nodes:[node("Meets DIL req","Yes",true)]});
+  // Issue 4 fix: PFS/DIL with proper eligibility nodes
+  {
+    const pfsIntentOK = !l.borrowerIntentRetention;
+    const pfsHardshipOK = STANDARD_HARDSHIPS.includes(l.hardshipType) || l.hardshipType === "Disaster";
+    const pfsDlqOK = dlq > 0;
+    const pfsPropOK = l.propertyDisposition === "Principal Residence" || l.propertyListedForSale;
+    const pfsNodes = [
+      node("Borrower intent = Disposition", pfsIntentOK?"Disposition":"Retention — switch intent", pfsIntentOK),
+      node("Documented hardship", l.hardshipType, pfsHardshipOK),
+      node("Loan is delinquent", dlq+"mo", pfsDlqOK),
+      node("Principal Residence (or listed for sale)", pfsPropOK?"Yes":"No", pfsPropOK),
+      node("Meets all other PFS criteria (HUD 4000.1 III.A.2.m)", l.meetsPFSRequirements?"Yes":"No — toggle when verified", l.meetsPFSRequirements),
+    ];
+    results.push({option:"Pre-Foreclosure Sale (PFS)",eligible:pfsNodes.every(nd=>nd.pass),nodes:pfsNodes,note:"Appraisal required; minimum net proceeds must equal FHA Net Value (88% of appraised value)"});
+  }
+  {
+    const dilPFSFailed = l.outstandingDebtUncurable;
+    const dilPropOK = l.propertyCondition !== "Condemned" && !l.occupancyAbandoned;
+    const dilHardshipOK = STANDARD_HARDSHIPS.includes(l.hardshipType) || l.hardshipType === "Disaster";
+    const dilNodes = [
+      node("PFS attempted and failed / borrower ineligible for PFS", dilPFSFailed?"Yes":"No", dilPFSFailed),
+      node("Documented hardship", l.hardshipType, dilHardshipOK),
+      node("Property not condemned/abandoned", l.propertyCondition, dilPropOK),
+      node("Meets all other DIL criteria (HUD 4000.1 III.A.2.n)", l.meetsDILRequirements?"Yes":"No — toggle when verified", l.meetsDILRequirements),
+    ];
+    results.push({option:"Deed-in-Lieu (DIL)",eligible:dilNodes.every(nd=>nd.pass),nodes:dilNodes,note:"Clear title required; borrower must vacate prior to deed conveyance"});
+  }
   return results;
 }
 function evaluateUSDA(l) {
