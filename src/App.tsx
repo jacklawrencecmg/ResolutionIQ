@@ -69,6 +69,7 @@ const initLoan = {
   usdaDLQGt30:false, usdaCompleteBRP:false,
   usdaDLQLe60AndBRP:false, usdaDLQGe60AndDisposition:false,
   usdaPriorWorkoutCompSaleFailed:false,
+  usdaStep3DeferralRequired:false,
   // FNMA
   fnmaLoanAge:"24",
   fnmaPriorDeferredUPB:"0",
@@ -625,6 +626,52 @@ function calcApprovalTerms(optionName, l) {
       "Target Payment (31% GMI)": gmi > 0 ? fmt$(gmi*0.31) : "Enter GMI",
       "Trial Payment Plan": "3 months (4 months if imminent default)",
       "Approval Notification": "2-day mail with enclosed 2-day return envelope",
+      "Authority": "HB-1-3555 §18.7; 40-year term authority confirmed by USDA RD Final Rule (eff. Feb 11, 2025)",
+    };
+  }
+
+  // ── USDA Modification + MRA Servicing Plan (Final Rule — eff. Feb 11, 2025) ──
+  if (opt === "USDA Modification + MRA Servicing Plan") {
+    const newRate = pmms > 0 && currentRate > 0 ? Math.min(pmms, currentRate) : pmms;
+    const rateLabel = newRate > 0
+      ? fmtPct(newRate) + (currentRate > 0 && currentRate < pmms ? " (Current Note Rate — below PMMS)" : " (PMMS)")
+      : "Enter PMMS rate";
+    const newMat480 = newFirstPmt ? addMonths(newFirstPmt, 480) : null;
+    const newPI_extended = newRate > 0 && newUPB > 0 ? calcMonthlyPI(newUPB, newRate, 480) : null;
+    const newPITI_extended = newPI_extended != null ? newPI_extended + currentEscrow : null;
+    // MRA deferral amount: difference between full new UPB and affordable UPB at 480 months
+    const targetPI = target > 0 ? Math.max(0, target - currentEscrow) : null;
+    const r = newRate > 0 ? newRate / 100 / 12 : 0;
+    const affordableUPB = targetPI != null && r > 0 ? targetPI * (Math.pow(1+r,480) - 1) / (r * Math.pow(1+r,480)) : null;
+    const mraDeferred = affordableUPB != null ? Math.max(0, newUPB - affordableUPB) : null;
+    const maxMRA = originalUpb > 0 ? originalUpb * 0.30 : null;
+    const mraCapOK = maxMRA != null && mraDeferred != null ? (priorPC + mraDeferred) <= maxMRA : null;
+    const finalModUPB = affordableUPB;
+    const finalPI = finalModUPB != null && newRate > 0 ? calcMonthlyPI(finalModUPB, newRate, 480) : null;
+    const finalPITI = finalPI != null ? finalPI + currentEscrow : null;
+    return {
+      "Purpose": "Loan modification cannot achieve PITI target alone — MRA defers principal to close gap (Step 3)",
+      "── Step 1–2: Modification ──": "——",
+      "Modified Loan Amount (New UPB)": fmt$(newUPB),
+      "New Interest Rate": rateLabel,
+      "Step 2 — 480mo P&I / PITI (before deferral)": newPI_extended != null ? `${fmt$(newPI_extended)} / ${fmt$(newPITI_extended)}` : "Enter inputs",
+      "Target (31% GMI)": gmi > 0 ? fmt$(gmi*0.31) : "Enter GMI",
+      "Target Met at 480mo without MRA?": newPITI_extended != null && target > 0 ? (newPITI_extended <= target ? "✅ Yes — use Streamline Mod instead" : "❌ No — proceed to MRA deferral") : "Enter inputs",
+      "── Step 3: MRA Principal Deferral ──": "——",
+      "Affordable UPB at Target Payment (480mo)": affordableUPB != null ? fmt$(affordableUPB) : "Enter rate, GMI/target",
+      "MRA Principal Deferral Required": mraDeferred != null ? fmt$(mraDeferred) : "Enter inputs",
+      "Prior MRA Balance": fmt$(priorPC),
+      "Maximum MRA (30% of Original UPB)": maxMRA != null ? fmt$(maxMRA) : "Enter Original UPB",
+      "MRA Within 30% Cap?": mraCapOK == null ? "Enter Original UPB" : mraCapOK ? "✅ Yes" : "❌ No — exceeds cap",
+      "── Final Modified Loan ──": "——",
+      "Final Modified UPB (after MRA deferral)": finalModUPB != null ? fmt$(finalModUPB) : "Enter inputs",
+      "New Loan Term": "480 months (40 years)",
+      "Final P&I / PITI": finalPI != null ? `${fmt$(finalPI)} / ${fmt$(finalPITI)}` : "Enter inputs",
+      "New Maturity Date": fmtDate(newMat480),
+      "New First Payment Date": fmtDate(newFirstPmt),
+      "MRA Lien Type": "Non-interest bearing subordinate lien; due on sale, refinance, or payoff",
+      "Trial Payment Plan": "3 months (4 months if imminent default)",
+      "Authority": "HB-1-3555 §18.7; USDA RD Final Rule (eff. Feb 11, 2025) — Modification MRA Servicing Plan",
     };
   }
 
@@ -980,6 +1027,8 @@ function calcApprovalTerms(optionName, l) {
       "PC Lien Type": "Non-interest bearing subordinate lien",
       "PC Payoff Trigger": "Due upon sale, refinance, or payoff",
       "Process Note": "VA purchases loan from servicer; borrower makes payments directly to VA",
+      "⚠️ Program Status": "VASP DISCONTINUED May 1, 2025 (Circular 26-25-2). Historical reference only.",
+      "New Partial Claim Authority": "VA Home Loan Program Reform Act (signed July 30, 2025) authorized a new VA partial claim program. Implementation guidance PENDING — do not use until VA issues regulatory/guidance update.",
     };
   }
 
@@ -1257,11 +1306,12 @@ function calcApprovalTerms(optionName, l) {
       "Selling Costs Allowed": "Commission, title, transfer taxes, customary closing costs",
       "Servicer Approval": "Servicer has delegated authority for Standard Short Sale per §9208; others require Freddie Mac approval via Resolve",
       "Streamlined Short Sale": "Available for eligible borrowers — reduced documentation per §9208.3",
+      "Prior Retention Evaluation": "NOT required — Bulletin 2026-2 eliminated the requirement to evaluate home retention options before approving a short sale",
       "Borrower Deficiency": "May be waived per Freddie Mac guidelines",
       "Relocation Assistance": "May be available per current Freddie Mac guidelines",
       "MI Claim": "Servicer provides claim documentation to MI within 60 days of short sale",
       "Servicer Compensation": "$2,200 incentive",
-      "Authority": "Freddie Mac Single-Family Guide §9208 (02/11/26)",
+      "Authority": "Freddie Mac Single-Family Guide §9208; Bulletin 2026-2 (prior retention evaluation requirement removed)",
     };
   }
   // ── FHLMC Deed-in-Lieu ──
@@ -1702,6 +1752,8 @@ function evaluateUSDA(l) {
   const notListedForSale = !l.propertyListedForSale;
   const sb=br&&l.borrowerIntentRetention&&l.occupancyStatus==="Owner Occupied"&&nm<2&&!l.usdaPriorFailedStreamlineTPP&&dlqD>=90&&l.usdaUpbGe5000&&l.usdaPaymentsMade12&&l.usdaBankruptcyNotActive&&l.usdaLitigationNotActive&&l.usdaForeclosureSaleGe60Away&&notListedForSale;
   results.push({option:"USDA Streamline Loan Modification",eligible:sb,nodes:[node("≥90d DLQ",dlqD,dlqD>=90),node("UPB≥$5k",l.usdaUpbGe5000,l.usdaUpbGe5000),node("12+ payments since origination (loan age)",l.usdaPaymentsMade12,l.usdaPaymentsMade12),node("Bankruptcy≠Active",l.usdaBankruptcyNotActive,l.usdaBankruptcyNotActive),node("Litigation≠Active",l.usdaLitigationNotActive,l.usdaLitigationNotActive),node("No failed Streamline TPP",!l.usdaPriorFailedStreamlineTPP,!l.usdaPriorFailedStreamlineTPP),node("Not Abandoned/Condemned",br,br),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Prior mods < 2 (max 1 Streamline mod lifetime — HB-1-3555 §18.7)",nm,nm<2),node("Foreclosure sale≥60d",l.usdaForeclosureSaleGe60Away,l.usdaForeclosureSaleGe60Away),node("Property not listed for sale",notListedForSale?"No":"Listed for sale",notListedForSale)]});
+  // USDA Modification + MRA Servicing Plan (Final Rule eff. Feb 11, 2025): when 480mo mod alone can't achieve target
+  results.push({option:"USDA Modification + MRA Servicing Plan",eligible:sb&&l.usdaStep3DeferralRequired,nodes:[node("≥90d DLQ",dlqD,dlqD>=90),node("Streamline Mod base eligible",sb,sb),node("480mo re-amortization alone cannot achieve PITI target (Step 3 required)",l.usdaStep3DeferralRequired?"Yes":"No",l.usdaStep3DeferralRequired)],note:"Step 3: MRA principal deferral closes gap when mod + 480mo term still can't reach target — USDA RD Final Rule (Feb 11, 2025)"});
   results.push({option:"USDA Standalone Mortgage Recovery Advance (MRA)",eligible:l.usdaBorrowerCanResumeCurrent&&(l.usdaHardshipDurationResolved||l.usdaLoanModIneligible)&&l.usdaBorrowerCannotCureDLQWithin12&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&dlqD>=30,nodes:[node("Can resume payment",l.usdaBorrowerCanResumeCurrent,l.usdaBorrowerCanResumeCurrent),node("Resolved OR Mod Ineligible",l.usdaHardshipDurationResolved||l.usdaLoanModIneligible,l.usdaHardshipDurationResolved||l.usdaLoanModIneligible),node("Cannot cure DLQ 12mo",l.usdaBorrowerCannotCureDLQWithin12,l.usdaBorrowerCannotCureDLQWithin12),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30)]});
   results.push({option:"USDA Disaster Term Extension Modification",eligible:l.usdaPriorWorkoutDisasterForbearance&&isD&&l.usdaHardshipNotResolved&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.usdaDLQGe12Contractual&&l.usdaDLQAt30AtDisaster&&l.usdaLoanGe60DLQ&&l.usdaPrevWorkoutForbearance&&l.usdaWorkoutStateActivePassed,nodes:[node("Prior=Disaster Forbearance",l.usdaPriorWorkoutDisasterForbearance,l.usdaPriorWorkoutDisasterForbearance),node("Hardship=Disaster",isD,isD),node("Hardship≠Resolved",l.usdaHardshipNotResolved,l.usdaHardshipNotResolved),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("DLQ≥12 Contractual",l.usdaDLQGe12Contractual,l.usdaDLQGe12Contractual),node("<30d DLQ at Declaration",l.usdaDLQAt30AtDisaster,l.usdaDLQAt30AtDisaster),node("Loan≥60d DLQ",l.usdaLoanGe60DLQ,l.usdaLoanGe60DLQ),node("Prev=Forbearance",l.usdaPrevWorkoutForbearance,l.usdaPrevWorkoutForbearance),node("Workout{Active,Passed}",l.usdaWorkoutStateActivePassed,l.usdaWorkoutStateActivePassed)]});
   results.push({option:"USDA Disaster Modification",eligible:isD&&l.lienPosition==="First"&&l.usdaDLQAt30AtDisaster&&l.hardshipDuration==="Resolved"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.usdaBorrowerCanResumePmtFalse&&l.usdaLoanGe30DaysDLQ&&l.usdaPostModPITILePreMod,nodes:[node("Hardship=Disaster",isD,isD),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("<30d at Declaration",l.usdaDLQAt30AtDisaster,l.usdaDLQAt30AtDisaster),node("Hardship=Resolved",l.hardshipDuration,l.hardshipDuration==="Resolved"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Cannot resume pmt",l.usdaBorrowerCanResumePmtFalse,l.usdaBorrowerCanResumePmtFalse),node("Loan≥30d DLQ",l.usdaLoanGe30DaysDLQ,l.usdaLoanGe30DaysDLQ),node("Post-Mod PITI≤Pre",l.usdaPostModPITILePreMod,l.usdaPostModPITILePreMod)]});
@@ -1751,8 +1803,10 @@ function evaluateVA(l) {
   // 4c. 40-Year Loan Modification — Circular 26-22-18; rate=PMMS, 480-month term
   //     NOTE: 10% P&I reduction requirement REMOVED by Circular 26-25-2 (effective May 1, 2025)
   results.push({option:"VA 40-Year Loan Modification",eligible:vb&&sH&&dlqD>=61&&l.borrowerConfirmedCannotAffordCurrent&&oo&&l.borrowerIntentRetention,nodes:[...vN,node("Std hardship",l.hardshipType,sH),node("DLQ≥61d",dlqD,dlqD>=61),node("Confirmed cannot afford",l.borrowerConfirmedCannotAffordCurrent,l.borrowerConfirmedCannotAffordCurrent),node("Owner Occupied",l.occupancyStatus,oo),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention)]});
-  // 5. VASP — DISCONTINUED May 1, 2025 per Circular 26-25-2; no new submissions accepted
-  results.push({option:"VASP (VA Partial Claim)",eligible:false,nodes:[node("Program status","Discontinued — VA rescinded VASP effective May 1, 2025 (Circular 26-25-2). No new submissions accepted.",false)],note:"VASP ended May 1, 2025. Use 40-Year Modification instead."});
+  // 5. VASP — DISCONTINUED May 1, 2025 per Circular 26-25-2.
+  //    VA Home Loan Program Reform Act (signed July 30, 2025) authorized a NEW partial claim program;
+  //    implementation guidance from VA is PENDING — no new submissions until guidance issued.
+  results.push({option:"VASP (VA Partial Claim)",eligible:false,nodes:[node("Program status","Discontinued — VA rescinded VASP effective May 1, 2025 (Circular 26-25-2). No new submissions accepted.",false)],note:"VASP ended May 1, 2025. New VA partial claim authorized by VA Home Loan Program Reform Act (July 30, 2025) — implementation guidance PENDING. Use 40-Year Modification for current defaults."});
   // 6. Disposition options
   const vaDispositionIntent = !l.borrowerIntentRetention;
   const vaDispositionBRP = dlqD<=60 ? l.completeBRP : true;
@@ -1931,7 +1985,7 @@ function evaluateFHLMC(l) {
       node("Eligible hardship", l.hardshipType, l.hardshipType !== "None"),
       node("Conventional mortgage", l.fhlmcMortgageType, isConventional),
     ];
-    results.push({ option:"Freddie Mac Short Sale", eligible:nodes.every(nd=>nd.pass), nodes, note:"$2,200 servicer incentive; Streamlined Short Sale available for eligible borrowers" });
+    results.push({ option:"Freddie Mac Short Sale", eligible:nodes.every(nd=>nd.pass), nodes, note:"$2,200 servicer incentive; Streamlined Short Sale available for eligible borrowers. Per Bulletin 2026-2: prior home retention evaluation no longer required before short sale approval." });
   }
   // ── 7. Deed-in-Lieu ───────────────────────────────────────────────────────────
   {
@@ -2513,6 +2567,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <Tog label="Hardship type not excluded" value={loan.usdaHardshipNotExcluded} onChange={v=>set("usdaHardshipNotExcluded",v)}/>
                   <Tog label="New RPP payment ≤ 200% of current" value={loan.usdaNewPaymentLe200pct} onChange={v=>set("usdaNewPaymentLe200pct",v)}/>
                   <Tog label="Borrower has positive net income" value={loan.usdaBorrowerPositiveNetIncome} onChange={v=>set("usdaBorrowerPositiveNetIncome",v)}/>
+                  <Tog label="480-mo re-amortization alone cannot achieve PITI target (Step 3 MRA required)" value={loan.usdaStep3DeferralRequired} onChange={v=>set("usdaStep3DeferralRequired",v)}/>
                 </Sec>
                 <Sec title="USDA – MRA / Disaster">
                   <Tog label="Borrower can resume current payment" value={loan.usdaBorrowerCanResumeCurrent} onChange={v=>set("usdaBorrowerCanResumeCurrent",v)}/>
