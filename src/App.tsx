@@ -1597,6 +1597,7 @@ function evaluateFHA(l) {
   const upbWithinOrig = !origUpbEntered || newUPBFHA <= origUpbFHA;
   const upbWithinOrigLabel = !origUpbEntered ? "Enter Original UPB to verify" : (newUPBFHA <= origUpbFHA ? `✅ ${newUPBFHA.toFixed(2)} ≤ ${origUpbFHA.toFixed(2)}` : `❌ ${newUPBFHA.toFixed(2)} > ${origUpbFHA.toFixed(2)}`);
 
+  const isDisaster = l.hardshipType === "Disaster";
   const baseNodes=[node("Occupancy=Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Foreclosure≠Active",!l.foreclosureActive,!l.foreclosureActive),node("Property≠Condemned/Uninhabitable",l.propertyCondition,l.propertyCondition!=="Condemned"&&l.propertyCondition!=="Uninhabitable"),node("Property=Principal Residence",l.propertyDisposition,l.propertyDisposition==="Principal Residence"),node("Lien=First",l.lienPosition,l.lienPosition==="First")];
   const baseEligible=baseNodes.every(nd=>nd.pass);
 
@@ -1650,10 +1651,10 @@ function evaluateFHA(l) {
   }
 
   // Repayment Plan
-  results.push({option:"Repayment Plan",eligible:dlq<=12&&l.canRepayWithin24Months&&!l.failedTPP,nodes:[node("DLQ≤12mo",dlq,dlq<=12),node("Can repay 24mo",l.canRepayWithin24Months,l.canRepayWithin24Months),node("No failed TPP",!l.failedTPP,!l.failedTPP)]});
+  results.push({option:"Repayment Plan",eligible:!isDisaster&&dlq<=12&&l.canRepayWithin24Months&&!l.failedTPP,nodes:[node("Non-disaster hardship",l.hardshipType,!isDisaster),node("DLQ≤12mo",dlq,dlq<=12),node("Can repay 24mo",l.canRepayWithin24Months,l.canRepayWithin24Months),node("No failed TPP",!l.failedTPP,!l.failedTPP)]});
 
   // Formal Forbearance
-  results.push({option:"Formal Forbearance",eligible:dlq<12&&(l.canRepayWithin6Months||l.requestedForbearance),nodes:[node("DLQ<12mo",dlq,dlq<12),node("Repay 6mo OR requested",l.canRepayWithin6Months||l.requestedForbearance,l.canRepayWithin6Months||l.requestedForbearance)]});
+  results.push({option:"Formal Forbearance",eligible:!isDisaster&&dlq<12&&(l.canRepayWithin6Months||l.requestedForbearance),nodes:[node("Non-disaster hardship",l.hardshipType,!isDisaster),node("DLQ<12mo",dlq,dlq<12),node("Repay 6mo OR requested",l.canRepayWithin6Months||l.requestedForbearance,l.canRepayWithin6Months||l.requestedForbearance)]});
 
   // ML 2025-12: home retention base — no continuousIncome req; 24-month cooldown
   const cooldownOK = priorHR === 0 || priorHR >= 24;
@@ -1674,7 +1675,7 @@ function evaluateFHA(l) {
   const fhaDeferDlqOK = dlq >= 3 && dlq <= 12;
   const fhaDeferCumOK = fhaDeferCumUsed < 12;
   const fhaDeferSpacingOK = fhaDeferPrior === 0 || fhaDeferPrior >= 12;
-  results.push({option:"FHA Payment Deferral",eligible:baseEligible&&fhaDeferDlqOK&&l.fhaHardshipResolved&&fhaDeferCumOK&&fhaDeferSpacingOK,nodes:[...baseNodes,node("DLQ 3–12 months",dlq+"mo",fhaDeferDlqOK),node("Hardship resolved",l.fhaHardshipResolved?"Yes":"No",l.fhaHardshipResolved),node("Cumulative FHA deferrals < 12 months",fhaDeferCumUsed+"mo",fhaDeferCumOK),node("Prior FHA deferral ≥12 months ago (or never)",fhaDeferPrior===0?"None":fhaDeferPrior+"mo ago",fhaDeferSpacingOK)],note:"2–6 months per event; ≥12 months between events; 12-month lifetime cap — ML 2025-06"});
+  results.push({option:"FHA Payment Deferral",eligible:!isDisaster&&baseEligible&&fhaDeferDlqOK&&l.fhaHardshipResolved&&fhaDeferCumOK&&fhaDeferSpacingOK,nodes:[node("Non-disaster hardship",l.hardshipType,!isDisaster),...baseNodes,node("DLQ 3–12 months",dlq+"mo",fhaDeferDlqOK),node("Hardship resolved",l.fhaHardshipResolved?"Yes":"No",l.fhaHardshipResolved),node("Cumulative FHA deferrals < 12 months",fhaDeferCumUsed+"mo",fhaDeferCumOK),node("Prior FHA deferral ≥12 months ago (or never)",fhaDeferPrior===0?"None":fhaDeferPrior+"mo ago",fhaDeferSpacingOK)],note:"2–6 months per event; ≥12 months between events; 12-month lifetime cap — ML 2025-06"});
 
   // FHA 30-Year Standalone Modification (step 5: 25% P&I reduction, PMMS+25bps, 360 months)
   results.push({option:"FHA 30-Year Standalone Modification",eligible:hb&&canAchieve360,nodes:[...hn,node("25% P&I reduction achievable by 360mo re-amortization",achieve360Label,canAchieve360)],note:fhaPmms>0?`Rate: PMMS ${fhaPmms.toFixed(3)}% + 25bps = ${fhaModRate.toFixed(3)}% — ML 2025-06`:null});
@@ -1683,7 +1684,7 @@ function evaluateFHA(l) {
   results.push({option:"FHA 40-Year Combination Modification + Partial Claim",eligible:hb&&!canAchieve360&&cok&&canAchieve480&&upbWithinOrig,nodes:[...hn,node("25% reduction NOT achievable by 360mo re-amortization",achieve360Label,!canAchieve360),node("PC within 30% cap",comboCapLabel,cok),node("25% reduction achievable by 480mo re-amortization",achieve480Label,canAchieve480),node("New UPB ≤ Original UPB",upbWithinOrigLabel,upbWithinOrig)],note:"ML 2025-06 — rate: PMMS+25bps; term: 480 months"});
 
   // Payment Supplement (step 7: all eligible delinquent borrowers, not unemployed-only — ML 2025-06)
-  results.push({option:"Payment Supplement",eligible:baseEligible&&dlq>0&&!canAchieve360&&l.comboPaymentLe40PctIncome,nodes:[...baseNodes,node("DLQ>0",dlq,dlq>0),node("25% P&I reduction NOT achievable by re-amortization",achieve360Label,!canAchieve360),node("Combo pmt≤40% GMI",l.comboPaymentLe40PctIncome,l.comboPaymentLe40PctIncome)],note:"ML 2025-06: Open to all eligible delinquent borrowers (not unemployed-only)"});
+  results.push({option:"Payment Supplement",eligible:!isDisaster&&baseEligible&&dlq>0&&!canAchieve360&&l.comboPaymentLe40PctIncome,nodes:[node("Non-disaster hardship",l.hardshipType,!isDisaster),...baseNodes,node("DLQ>0",dlq,dlq>0),node("25% P&I reduction NOT achievable by re-amortization",achieve360Label,!canAchieve360),node("Combo pmt≤40% GMI",l.comboPaymentLe40PctIncome,l.comboPaymentLe40PctIncome)],note:"ML 2025-06: Open to all eligible delinquent borrowers (not unemployed-only)"});
 
   // Special Forbearance – Unemployment
   results.push({option:"Special Forbearance – Unemployment",eligible:dlq<=12&&!l.foreclosureActive&&l.hardshipType==="Unemployment"&&l.occupancyStatus==="Owner Occupied"&&l.propertyDisposition==="Principal Residence"&&l.verifiedUnemployment&&!l.continuousIncome&&l.ineligibleAllRetention&&!l.propertyListedForSale&&!l.assumptionInProcess,nodes:[node("DLQ≤12mo",dlq,dlq<=12),node("Hardship=Unemployment",l.hardshipType,l.hardshipType==="Unemployment"),node("Verified unemployment",l.verifiedUnemployment,l.verifiedUnemployment),node("No continuous income",!l.continuousIncome,!l.continuousIncome),node("Ineligible all retention",l.ineligibleAllRetention,l.ineligibleAllRetention),node("Not listed for sale",!l.propertyListedForSale,!l.propertyListedForSale),node("No assumption",!l.assumptionInProcess,!l.assumptionInProcess)]});
@@ -1723,11 +1724,11 @@ function evaluateUSDA(l) {
   const isD=l.hardshipType==="Disaster", ltp=l.hardshipDuration==="Long Term"||l.hardshipDuration==="Permanent";
   const br=l.propertyCondition!=="Condemned"&&l.propertyCondition!=="Uninhabitable"&&!l.occupancyAbandoned&&l.lienPosition==="First";
   // Informal Forbearance base: allows pre-default (dlqD >= 0) per HB-1-3555 §18.4
-  const ib=dlqD>=0&&dlqD<360&&l.borrowerIntentRetention&&l.hardshipDuration==="Short Term"&&l.usdaHardshipNotExcluded&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.occupancyStatus==="Owner Occupied"&&(l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12);
-  const iN=[node("DLQ<360d",dlqD,dlqD>=0&&dlqD<360),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Short Term hardship",l.hardshipDuration,l.hardshipDuration==="Short Term"),node("Not excluded type",l.usdaHardshipNotExcluded,l.usdaHardshipNotExcluded),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Forbearance or DLQ<12mo",l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12,l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12)];
+  const ib=!isD&&dlqD>=0&&dlqD<360&&l.borrowerIntentRetention&&l.hardshipDuration==="Short Term"&&l.usdaHardshipNotExcluded&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.occupancyStatus==="Owner Occupied"&&(l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12);
+  const iN=[node("Non-disaster hardship",l.hardshipType,!isD),node("DLQ<360d",dlqD,dlqD>=0&&dlqD<360),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Short Term hardship",l.hardshipDuration,l.hardshipDuration==="Short Term"),node("Not excluded type",l.usdaHardshipNotExcluded,l.usdaHardshipNotExcluded),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Forbearance or DLQ<12mo",l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12,l.usdaForbearancePeriodLt12||l.usdaTotalDLQLt12)];
   // Repayment Plan base: hardship resolved (separate from forbearance base) per HB-1-3555 §18.4
-  const rb=dlqD>0&&dlqD<360&&l.borrowerIntentRetention&&l.hardshipDuration==="Resolved"&&l.usdaHardshipNotExcluded&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.occupancyStatus==="Owner Occupied";
-  const rN=[node("DLQ>0&<360d",dlqD,dlqD>0&&dlqD<360),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Hardship=Resolved",l.hardshipDuration,l.hardshipDuration==="Resolved"),node("Not excluded type",l.usdaHardshipNotExcluded,l.usdaHardshipNotExcluded),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied")];
+  const rb=!isD&&dlqD>0&&dlqD<360&&l.borrowerIntentRetention&&l.hardshipDuration==="Resolved"&&l.usdaHardshipNotExcluded&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.occupancyStatus==="Owner Occupied";
+  const rN=[node("Non-disaster hardship",l.hardshipType,!isD),node("DLQ>0&<360d",dlqD,dlqD>0&&dlqD<360),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Hardship=Resolved",l.hardshipDuration,l.hardshipDuration==="Resolved"),node("Not excluded type",l.usdaHardshipNotExcluded,l.usdaHardshipNotExcluded),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied")];
   // Issue 1: Add USDA Reinstatement
   results.push({option:"USDA Reinstatement",eligible:dlqD>0,nodes:[node("Past-due amounts exist",dlqD+"d DLQ",dlqD>0)],note:"Borrower pays all past-due amounts to restore current status — HB-1-3555 §18.3"});
 
@@ -1750,11 +1751,11 @@ function evaluateUSDA(l) {
 
   // Issue 3: Add propertyListedForSale check; Issue 6: clarify prior mod count label
   const notListedForSale = !l.propertyListedForSale;
-  const sb=br&&l.borrowerIntentRetention&&l.occupancyStatus==="Owner Occupied"&&nm<2&&!l.usdaPriorFailedStreamlineTPP&&dlqD>=90&&l.usdaUpbGe5000&&l.usdaPaymentsMade12&&l.usdaBankruptcyNotActive&&l.usdaLitigationNotActive&&l.usdaForeclosureSaleGe60Away&&notListedForSale;
-  results.push({option:"USDA Streamline Loan Modification",eligible:sb,nodes:[node("≥90d DLQ",dlqD,dlqD>=90),node("UPB≥$5k",l.usdaUpbGe5000,l.usdaUpbGe5000),node("12+ payments since origination (loan age)",l.usdaPaymentsMade12,l.usdaPaymentsMade12),node("Bankruptcy≠Active",l.usdaBankruptcyNotActive,l.usdaBankruptcyNotActive),node("Litigation≠Active",l.usdaLitigationNotActive,l.usdaLitigationNotActive),node("No failed Streamline TPP",!l.usdaPriorFailedStreamlineTPP,!l.usdaPriorFailedStreamlineTPP),node("Not Abandoned/Condemned",br,br),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Prior mods < 2 (max 1 Streamline mod lifetime — HB-1-3555 §18.7)",nm,nm<2),node("Foreclosure sale≥60d",l.usdaForeclosureSaleGe60Away,l.usdaForeclosureSaleGe60Away),node("Property not listed for sale",notListedForSale?"No":"Listed for sale",notListedForSale)]});
+  const sb=!isD&&br&&l.borrowerIntentRetention&&l.occupancyStatus==="Owner Occupied"&&nm<2&&!l.usdaPriorFailedStreamlineTPP&&dlqD>=90&&l.usdaUpbGe5000&&l.usdaPaymentsMade12&&l.usdaBankruptcyNotActive&&l.usdaLitigationNotActive&&l.usdaForeclosureSaleGe60Away&&notListedForSale;
+  results.push({option:"USDA Streamline Loan Modification",eligible:sb,nodes:[node("Non-disaster hardship",l.hardshipType,!isD),node("≥90d DLQ",dlqD,dlqD>=90),node("UPB≥$5k",l.usdaUpbGe5000,l.usdaUpbGe5000),node("12+ payments since origination (loan age)",l.usdaPaymentsMade12,l.usdaPaymentsMade12),node("Bankruptcy≠Active",l.usdaBankruptcyNotActive,l.usdaBankruptcyNotActive),node("Litigation≠Active",l.usdaLitigationNotActive,l.usdaLitigationNotActive),node("No failed Streamline TPP",!l.usdaPriorFailedStreamlineTPP,!l.usdaPriorFailedStreamlineTPP),node("Not Abandoned/Condemned",br,br),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,l.occupancyStatus==="Owner Occupied"),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Prior mods < 2 (max 1 Streamline mod lifetime — HB-1-3555 §18.7)",nm,nm<2),node("Foreclosure sale≥60d",l.usdaForeclosureSaleGe60Away,l.usdaForeclosureSaleGe60Away),node("Property not listed for sale",notListedForSale?"No":"Listed for sale",notListedForSale)]});
   // USDA Modification + MRA Servicing Plan (Final Rule eff. Feb 11, 2025): when 480mo mod alone can't achieve target
   results.push({option:"USDA Modification + MRA Servicing Plan",eligible:sb&&l.usdaStep3DeferralRequired,nodes:[node("≥90d DLQ",dlqD,dlqD>=90),node("Streamline Mod base eligible",sb,sb),node("480mo re-amortization alone cannot achieve PITI target (Step 3 required)",l.usdaStep3DeferralRequired?"Yes":"No",l.usdaStep3DeferralRequired)],note:"Step 3: MRA principal deferral closes gap when mod + 480mo term still can't reach target — USDA RD Final Rule (Feb 11, 2025)"});
-  results.push({option:"USDA Standalone Mortgage Recovery Advance (MRA)",eligible:l.usdaBorrowerCanResumeCurrent&&(l.usdaHardshipDurationResolved||l.usdaLoanModIneligible)&&l.usdaBorrowerCannotCureDLQWithin12&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&dlqD>=30,nodes:[node("Can resume payment",l.usdaBorrowerCanResumeCurrent,l.usdaBorrowerCanResumeCurrent),node("Resolved OR Mod Ineligible",l.usdaHardshipDurationResolved||l.usdaLoanModIneligible,l.usdaHardshipDurationResolved||l.usdaLoanModIneligible),node("Cannot cure DLQ 12mo",l.usdaBorrowerCannotCureDLQWithin12,l.usdaBorrowerCannotCureDLQWithin12),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30)]});
+  results.push({option:"USDA Standalone Mortgage Recovery Advance (MRA)",eligible:!isD&&l.usdaBorrowerCanResumeCurrent&&(l.usdaHardshipDurationResolved||l.usdaLoanModIneligible)&&l.usdaBorrowerCannotCureDLQWithin12&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&dlqD>=30,nodes:[node("Non-disaster hardship",l.hardshipType,!isD),node("Can resume payment",l.usdaBorrowerCanResumeCurrent,l.usdaBorrowerCanResumeCurrent),node("Resolved OR Mod Ineligible",l.usdaHardshipDurationResolved||l.usdaLoanModIneligible,l.usdaHardshipDurationResolved||l.usdaLoanModIneligible),node("Cannot cure DLQ 12mo",l.usdaBorrowerCannotCureDLQWithin12,l.usdaBorrowerCannotCureDLQWithin12),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30)]});
   results.push({option:"USDA Disaster Term Extension Modification",eligible:l.usdaPriorWorkoutDisasterForbearance&&isD&&l.usdaHardshipNotResolved&&l.lienPosition==="First"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.usdaDLQGe12Contractual&&l.usdaDLQAt30AtDisaster&&l.usdaLoanGe60DLQ&&l.usdaPrevWorkoutForbearance&&l.usdaWorkoutStateActivePassed,nodes:[node("Prior=Disaster Forbearance",l.usdaPriorWorkoutDisasterForbearance,l.usdaPriorWorkoutDisasterForbearance),node("Hardship=Disaster",isD,isD),node("Hardship≠Resolved",l.usdaHardshipNotResolved,l.usdaHardshipNotResolved),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("DLQ≥12 Contractual",l.usdaDLQGe12Contractual,l.usdaDLQGe12Contractual),node("<30d DLQ at Declaration",l.usdaDLQAt30AtDisaster,l.usdaDLQAt30AtDisaster),node("Loan≥60d DLQ",l.usdaLoanGe60DLQ,l.usdaLoanGe60DLQ),node("Prev=Forbearance",l.usdaPrevWorkoutForbearance,l.usdaPrevWorkoutForbearance),node("Workout{Active,Passed}",l.usdaWorkoutStateActivePassed,l.usdaWorkoutStateActivePassed)]});
   results.push({option:"USDA Disaster Modification",eligible:isD&&l.lienPosition==="First"&&l.usdaDLQAt30AtDisaster&&l.hardshipDuration==="Resolved"&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.usdaBorrowerCanResumePmtFalse&&l.usdaLoanGe30DaysDLQ&&l.usdaPostModPITILePreMod,nodes:[node("Hardship=Disaster",isD,isD),node("Lien=First",l.lienPosition,l.lienPosition==="First"),node("<30d at Declaration",l.usdaDLQAt30AtDisaster,l.usdaDLQAt30AtDisaster),node("Hardship=Resolved",l.hardshipDuration,l.hardshipDuration==="Resolved"),node("Not Condemned",l.propertyCondition,l.propertyCondition!=="Condemned"),node("Not Abandoned",!l.occupancyAbandoned,!l.occupancyAbandoned),node("Cannot resume pmt",l.usdaBorrowerCanResumePmtFalse,l.usdaBorrowerCanResumePmtFalse),node("Loan≥30d DLQ",l.usdaLoanGe30DaysDLQ,l.usdaLoanGe30DaysDLQ),node("Post-Mod PITI≤Pre",l.usdaPostModPITILePreMod,l.usdaPostModPITILePreMod)]});
   results.push({option:"USDA Disaster Mortgage Recovery Advance (MRA)",eligible:!l.usdaEligibleForDisasterExtension&&!l.usdaEligibleForDisasterMod&&isD&&l.lienPosition==="First"&&l.usdaDLQAt30AtDisaster&&l.hardshipDuration==="Resolved"&&l.usdaPriorWorkoutNotMRA&&l.usdaReinstatementLtMRACap&&l.propertyCondition!=="Condemned"&&!l.occupancyAbandoned&&l.usdaBorrowerCanResumePmtFalse&&l.usdaLoanGe30DaysDLQ&&l.usdaPostModPITILePreMod,nodes:[node("DisasterExt=FALSE",!l.usdaEligibleForDisasterExtension,!l.usdaEligibleForDisasterExtension),node("DisasterMod=FALSE",!l.usdaEligibleForDisasterMod,!l.usdaEligibleForDisasterMod),node("Hardship=Disaster",isD,isD),node("Prior≠MRA",l.usdaPriorWorkoutNotMRA,l.usdaPriorWorkoutNotMRA),node("Reinstatement<Cap",l.usdaReinstatementLtMRACap,l.usdaReinstatementLtMRACap),node("<30d at Declaration",l.usdaDLQAt30AtDisaster,l.usdaDLQAt30AtDisaster),node("Hardship=Resolved",l.hardshipDuration,l.hardshipDuration==="Resolved"),node("Cannot resume pmt",l.usdaBorrowerCanResumePmtFalse,l.usdaBorrowerCanResumePmtFalse),node("Post-Mod PITI≤Pre",l.usdaPostModPITILePreMod,l.usdaPostModPITILePreMod)]});
@@ -1793,7 +1794,7 @@ function evaluateVA(l) {
   // 1. Reinstatement — VA M26-4 §2.A: first option; borrower pays all arrears in one lump sum
   results.push({option:"VA Reinstatement",eligible:vb&&dlqD>=1&&l.borrowerCanAffordReinstateOrRepay,nodes:[...vN,node("DLQ>0",dlqD,dlqD>=1),node("Can afford reinstatement",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay)]});
   // 2. Repayment Plan — resolved hardship, borrower can make regular payment + catch-up
-  results.push({option:"VA Repayment Plan",eligible:vb&&rH&&dlqD>=30&&l.calculatedRPPGt0&&l.borrowerCanAffordReinstateOrRepay&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Hardship=Resolved",l.hardshipDuration,rH),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30),node("RPP Plans>0",l.calculatedRPPGt0,l.calculatedRPPGt0),node("Can afford RPP",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
+  results.push({option:"VA Repayment Plan",eligible:vb&&sH&&rH&&dlqD>=30&&l.calculatedRPPGt0&&l.borrowerCanAffordReinstateOrRepay&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Non-disaster hardship",l.hardshipType,sH),node("Hardship=Resolved",l.hardshipDuration,rH),node("DLQ≥30d (≥1 installment)",dlqD,dlqD>=30),node("RPP Plans>0",l.calculatedRPPGt0,l.calculatedRPPGt0),node("Can afford RPP",l.borrowerCanAffordReinstateOrRepay,l.borrowerCanAffordReinstateOrRepay),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
   // 3. Special Forbearance — active/temporary hardship (Long Term, not Resolved and not Permanent)
   results.push({option:"VA Special Forbearance",eligible:vb&&l.hardshipDuration==="Long Term"&&sH&&(l.forbearancePeriodLt12||l.totalDLQLt12)&&l.borrowerIntentRetention&&oo,nodes:[...vN,node("Hardship=Long Term (active)",l.hardshipDuration,l.hardshipDuration==="Long Term"),node("Std hardship",l.hardshipType,sH),node("Forbearance/DLQ<12mo",l.forbearancePeriodLt12||l.totalDLQLt12,l.forbearancePeriodLt12||l.totalDLQLt12),node("Intent=Retain",l.borrowerIntentRetention,l.borrowerIntentRetention),node("Owner Occupied",l.occupancyStatus,oo)]});
   // 4a. Traditional Modification — negotiated terms, requires VA approval
@@ -1837,6 +1838,7 @@ function evaluateFHLMC(l) {
   const noActiveRepay = !l.fhlmcActiveRepayPlan;
   const noUnexpiredOffer = !l.fhlmcUnexpiredOffer;
   const noRecourse = !l.fhlmcRecourse;
+  const isDisaster = l.hardshipType === "Disaster";
   // Hard ineligibility (absolute) for Flex Mod
   const hardIneligible = !isConventional || l.fhlmcRecourse;
   // Investment property hard stop only when <60 DLQ
@@ -1855,6 +1857,7 @@ function evaluateFHLMC(l) {
   // ── 1. Repayment Plan ─────────────────────────────────────────────────────────
   {
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Hardship resolved (temporary, no longer a problem)", l.fhlmcHardshipResolved?"Yes":"No", l.fhlmcHardshipResolved),
       node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
     ];
@@ -1869,6 +1872,7 @@ function evaluateFHLMC(l) {
     const eligCumCap = fhlmcCumDeferred < 12;
     const eligPriorDeferral = fhlmcPriorDeferral === 0 || fhlmcPriorDeferral >= 12;
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional 1st lien", l.lienPosition, isConventional && isFirstLien),
       node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
       node("DLQ 2–6 months", dlq+"mo", eligDlqRange),
@@ -1906,6 +1910,7 @@ function evaluateFHLMC(l) {
     const isTemporary = !l.fhlmcLongTermHardship; // short-term / not permanent
     const eligForbearance = isUnemployed || isTemporary;
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Temporary hardship or unemployment", eligForbearance ? (isUnemployed ? "Unemployment" : "Temporary hardship") : "Long-term/permanent — use Flex Mod", eligForbearance),
       node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
       node("No approved liquidation option active", l.fhlmcApprovedLiquidationOption?"Active":"None", noActiveLiquidation),
@@ -1922,6 +1927,7 @@ function evaluateFHLMC(l) {
     const rule2 = fico <= 620 || l.fhlmcPrior30DayDLQ6Mo || housingRatio > 40;
     const imminentValid = !l.fhlmcImminentDefault || (rule1 && rule2);
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional mortgage (not FHA/VA/RHS)", l.fhlmcMortgageType, isConventional),
       node("First lien", l.lienPosition, isFirstLien),
       node("No recourse arrangement", l.fhlmcRecourse?"Yes":"No", noRecourse),
@@ -1944,6 +1950,7 @@ function evaluateFHLMC(l) {
   {
     const eligStreamlined = dlq >= 3 || (l.fhlmcStepRateMortgage && l.fhlmcRateAdjustedWithin12Mo && dlq >= 2);
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional mortgage (not FHA/VA/RHS)", l.fhlmcMortgageType, isConventional),
       node("First lien", l.lienPosition, isFirstLien),
       node("No recourse arrangement", l.fhlmcRecourse?"Yes":"No", noRecourse),
@@ -2003,6 +2010,7 @@ function evaluateFHLMC(l) {
 
 function evaluateFNMA(l) {
   const results = [];
+  const isDisaster = l.hardshipType === "Disaster";
   const dlq = n(l.delinquencyMonths);
   const loanAge = n(l.fnmaLoanAge);
   const priorModCount = n(l.fnmaPriorModCount);
@@ -2040,6 +2048,7 @@ function evaluateFNMA(l) {
   // ── 2. Repayment Plan (D2-3.2-02) ────────────────────────────────────────────
   {
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Hardship appears resolved (temporary, no longer a problem)", l.fnmaHardshipResolved?"Yes":"No", l.fnmaHardshipResolved),
       node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
     ];
@@ -2056,6 +2065,7 @@ function evaluateFNMA(l) {
     const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
     const eligHardship = l.fnmaHardshipResolved || l.fnmaImminentDefault;
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional 1st lien", l.lienPosition, eligLienPos),
       node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
       node("DLQ 2–6 months at evaluation", dlq+"mo", eligDlqRange),
@@ -2109,6 +2119,7 @@ function evaluateFNMA(l) {
     const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
     const eligNoReDefault = !l.fnmaReDefaulted12Months;
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional 1st lien", l.lienPosition, eligLienPos),
       node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
       node("≥ 60 days DLQ OR servicer imminent default determination", dlq+"mo"+(l.fnmaImminentDefault?" (imminent default)":""), eligDLQ),
@@ -2130,6 +2141,7 @@ function evaluateFNMA(l) {
     const eligNoFailedTPP = !l.fnmaFailedTPP12Months;
     const eligNoReDefault = !l.fnmaReDefaulted12Months;
     const nodes = [
+      node("Non-disaster hardship", l.hardshipType, !isDisaster),
       node("Conventional 1st lien", l.lienPosition, eligLienPos),
       node("Loan age ≥ 12 months", loanAge+"mo", eligLoanAge),
       node("≥ 90 days (3 months) DLQ", dlq+"mo", eligDLQ),
