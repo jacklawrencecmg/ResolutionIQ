@@ -1858,6 +1858,7 @@ function evaluateFHLMC(l) {
   {
     const nodes = [
       node("Non-disaster hardship", l.hardshipType, !isDisaster),
+      node("Conventional 1st lien", l.lienPosition, isConventional && isFirstLien),
       node("Hardship resolved (temporary, no longer a problem)", l.fhlmcHardshipResolved?"Yes":"No", l.fhlmcHardshipResolved),
       node("Property not condemned/abandoned", l.propertyCondition, propertyOK),
     ];
@@ -2574,6 +2575,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <Tog label="No prior failed Streamline TPP" value={!loan.usdaPriorFailedStreamlineTPP} onChange={v=>set("usdaPriorFailedStreamlineTPP",!v)}/>
                   <F label="# Previous Modifications"><Num value={loan.usdaNumPrevMods} onChange={v=>set("usdaNumPrevMods",v)} placeholder="0"/></F>
                   <Tog label="Foreclosure sale ≥ 60 days away" value={loan.usdaForeclosureSaleGe60Away} onChange={v=>set("usdaForeclosureSaleGe60Away",v)}/>
+                  <Tog label="Property not listed for sale" value={!loan.propertyListedForSale} onChange={v=>set("propertyListedForSale",!v)}/>
                   <Tog label="Forbearance period < 12 months" value={loan.usdaForbearancePeriodLt12} onChange={v=>set("usdaForbearancePeriodLt12",v)}/>
                   <Tog label="Total DLQ < 12 months" value={loan.usdaTotalDLQLt12} onChange={v=>set("usdaTotalDLQLt12",v)}/>
                   <Tog label="Hardship type not excluded" value={loan.usdaHardshipNotExcluded} onChange={v=>set("usdaHardshipNotExcluded",v)}/>
