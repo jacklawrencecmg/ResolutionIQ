@@ -4,6 +4,13 @@ import resolutionIQLogo from "../ResolutionIQ_logo.svg";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LOAN_TYPES = ["FHA","USDA","VA","FNMA","FHLMC"];
+const GUIDELINE_VERSIONS = {
+  FHA: "ML 2025-06 / ML 2025-12 (effective Aug 2025)",
+  USDA: "RD Instruction 3555-C, Final Rule Feb 2025",
+  VA: "M26-4, Circular 26-25-2 (effective May 1, 2025)",
+  FHLMC: "Single-Family Guide Ch. 9200, Bulletin 2026-2",
+  FNMA: "Servicing Guide D2-3.2, updated 2025",
+};
 const TABS = ["inputs","results","audit","report","compare"];
 const TAB_LABELS = { inputs:"📋 Inputs", results:"✅ Results", audit:"🔍 Audit Trail", report:"📄 Report", compare:"⚖️ Compare" };
 const HARDSHIP_TYPES = ["Reduction in Income","Unemployment","Business Failure","Increase in Housing Expenses","Property Problem","Unknown","Disaster"];
@@ -2377,6 +2384,14 @@ function generateWaterfallReason(topOption, loan, calcTerms) {
 }
 
 // ─── UI HELPERS ───────────────────────────────────────────────────────────────
+const SrcBadge = ({type}:{type:"los"|"borrower"|"calc"}) => {
+  const cfg = {
+    los: {bg:"bg-green-100", text:"text-green-700", label:"📋 LOS"},
+    borrower: {bg:"bg-blue-100", text:"text-blue-700", label:"💬 Borrower"},
+    calc: {bg:"bg-slate-100", text:"text-slate-500", label:"🔢 Calc"},
+  }[type];
+  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.text} ml-1`}>{cfg.label}</span>;
+};
 const Sec=({title,children})=>(<div className="mb-5"><div className="flex items-center gap-2 mb-3"><div className="h-3.5 w-0.5 rounded-full bg-emerald-500"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span></div><div className="space-y-2.5">{children}</div></div>);
 const F=({label,children})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label>{children}</div>);
 const Sel=({value,onChange,options})=>(<select className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>);
@@ -2437,6 +2452,92 @@ function CalcTermsPanel({ optionName, loan }) {
   );
 }
 
+// ─── VALIDATION ───────────────────────────────────────────────────────────────
+function validateLoan(l): string[] {
+  const warnings: string[] = [];
+  const dlq = n(l.delinquencyMonths);
+  const arrears = n(l.arrearagesToCapitalize);
+  const currentPITI = n(l.currentPITI);
+  const pmms = n(l.pmmsRate);
+  const currentRate = n(l.currentInterestRate);
+  const upb = n(l.upb);
+  const origUpb = n(l.originalUpb);
+  const currentPI = n(l.currentPI);
+  const gmi = n(l.grossMonthlyIncome);
+
+  if (dlq > 0 && arrears > 0 && currentPITI > 0) {
+    const expected = dlq * currentPITI;
+    if (arrears > expected * 2) {
+      warnings.push(`Arrears (${fmt$(arrears)}) are more than 2× expected for DLQ period (${fmt$(expected)}) — verify capitalization amount`);
+    } else if (arrears < expected * 0.3) {
+      warnings.push(`Arrears (${fmt$(arrears)}) seem low for ${dlq} months DLQ (expected ~${fmt$(expected)}) — verify capitalization amount`);
+    }
+  }
+
+  if (pmms > 0 && (pmms < 4 || pmms > 12)) {
+    warnings.push(`PMMS rate ${pmms.toFixed(3)}% is outside normal range (4%–12%) — verify rate`);
+  }
+
+  if (currentRate > 0 && (currentRate < 2 || currentRate > 15)) {
+    warnings.push(`Current interest rate ${currentRate.toFixed(3)}% is outside normal range — verify`);
+  }
+
+  if (upb > 0 && currentPI > 0 && currentRate > 0) {
+    const impliedRate = (currentPI / upb) * 12 * 100;
+    if (Math.abs(impliedRate - currentRate) > 3) {
+      warnings.push(`Current P&I (${fmt$(currentPI)}) may not match UPB (${fmt$(upb)}) at rate ${currentRate.toFixed(3)}% — verify loan terms`);
+    }
+  }
+
+  if (dlq > 12 && l.loanType === "FHA" && !l.foreclosureActive) {
+    warnings.push(`FHA loans 12+ months delinquent typically have foreclosure initiated — verify foreclosure status`);
+  }
+
+  if (gmi > 0 && currentPITI > 0 && currentPITI / gmi > 0.60) {
+    warnings.push(`Housing expense ratio ${(currentPITI / gmi * 100).toFixed(1)}% exceeds 60% of GMI — verify income and payment amounts`);
+  }
+
+  if (upb > 0 && origUpb > 0 && upb > origUpb * 1.5) {
+    warnings.push(`Current UPB (${fmt$(upb)}) is >150% of original UPB (${fmt$(origUpb)}) — verify capitalization history`);
+  }
+
+  return warnings;
+}
+
+// ─── JSON IMPORT FIELD MAP ─────────────────────────────────────────────────────
+const FIELD_MAP: Record<string, string|null> = {
+  "LoanNumber": "loanNumber",
+  "loan_number": "loanNumber",
+  "BorrowerLastName": null,
+  "BorrowerFirstName": null,
+  "borrower_name": "borrowerName",
+  "CurrentUPB": "upb",
+  "current_upb": "upb",
+  "OriginalLoanAmount": "originalUpb",
+  "original_upb": "originalUpb",
+  "MonthlyEscrow": "currentEscrow",
+  "monthly_escrow": "currentEscrow",
+  "PIPayment": "currentPI",
+  "monthly_pi": "currentPI",
+  "PITIPayment": "currentPITI",
+  "monthly_piti": "currentPITI",
+  "GrossMonthlyIncome": "grossMonthlyIncome",
+  "gross_monthly_income": "grossMonthlyIncome",
+  "InterestRate": "currentInterestRate",
+  "interest_rate": "currentInterestRate",
+  "DelinquencyMonths": "delinquencyMonths",
+  "months_delinquent": "delinquencyMonths",
+  "LoanType": "loanType",
+  "loan_type": "loanType",
+  "PropertyType": "propertyDisposition",
+  "OccupancyType": "occupancyStatus",
+  "NoteDate": "noteFirstPaymentDate",
+  "first_payment_date": "noteFirstPaymentDate",
+  "MaturityDate": "originalMaturityDate",
+  "OriginalTerm": "noteTerm",
+  "HardshipReason": "hardshipType",
+};
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 interface Profile { id:string; email:string; full_name:string; approved:boolean; role:string; }
 
@@ -2478,6 +2579,18 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   const [results2,setResults2]=useState([]);
   const [evaluated2,setEvaluated2]=useState(false);
   const [showAdmin,setShowAdmin]=useState(false);
+  // Validation warnings
+  const [validationWarnings,setValidationWarnings]=useState<string[]>([]);
+  // DB Setup modal
+  const [showDbSetup,setShowDbSetup]=useState(false);
+  // JSON import modal
+  const [showImportModal,setShowImportModal]=useState(false);
+  const [importJson,setImportJson]=useState("");
+  const [importMsg,setImportMsg]=useState("");
+  // Auto-computed section collapse state
+  const [fhaCalcExpanded,setFhaCalcExpanded]=useState(true);
+  const [fhlmcIDExpanded,setFhlmcIDExpanded]=useState(true);
+  const [fnmaIDExpanded,setFnmaIDExpanded]=useState(true);
   // Save/Load state
   const [caseNotes,setCaseNotes]=useState("");
   const [saveToast,setSaveToast]=useState("");
@@ -2505,7 +2618,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   const set=useCallback((k,v)=>{setLoan(p=>({...p,[k]:v}));setEvaluated(false);},[]);
   const set2=useCallback((k,v)=>{setLoan2(p=>({...p,[k]:v}));setEvaluated2(false);},[]);
   const evalLoan=(l)=>l.loanType==="FHA"?evaluateFHA(l):l.loanType==="USDA"?evaluateUSDA(l):l.loanType==="VA"?evaluateVA(l):l.loanType==="FNMA"?evaluateFNMA(l):evaluateFHLMC(l);
-  const evaluate=()=>{setResults(evalLoan(loan));setEvaluated(true);setTab("results");setAiResponse("");};
+  const evaluate=()=>{setResults(evalLoan(loan));setValidationWarnings(validateLoan(loan));setEvaluated(true);setTab("results");setAiResponse("");};
   const evaluate2=()=>{setResults2(evalLoan(loan2));setEvaluated2(true);};
 
   const saveCase=async()=>{
@@ -2519,6 +2632,8 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
         loan_data:loan,
         results:results,
         notes:caseNotes||null,
+        guideline_version:GUIDELINE_VERSIONS[loan.loanType as keyof typeof GUIDELINE_VERSIONS]||null,
+        evaluated_at:new Date().toISOString(),
       });
       setSaveToast("✅ Case saved!");
       setTimeout(()=>setSaveToast(""),3000);
@@ -2541,6 +2656,36 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     setCaseNotes(savedCase.notes||"");
     setShowLoadModal(false);
     setTab("results");
+  };
+
+  const importLoanData=()=>{
+    try {
+      const raw = JSON.parse(importJson);
+      const mapped: Record<string,any> = {};
+      let imported = 0, unrecognized = 0;
+      // Handle BorrowerFirstName + BorrowerLastName combination
+      const firstName = raw["BorrowerFirstName"] || "";
+      const lastName = raw["BorrowerLastName"] || "";
+      if (firstName || lastName) {
+        mapped["borrowerName"] = [lastName, firstName].filter(Boolean).join(", ");
+        imported++;
+      }
+      for (const [key, val] of Object.entries(raw)) {
+        if (key === "BorrowerFirstName" || key === "BorrowerLastName") continue;
+        if (key in FIELD_MAP) {
+          const appKey = FIELD_MAP[key];
+          if (appKey) { mapped[appKey] = String(val); imported++; }
+        } else {
+          unrecognized++;
+        }
+      }
+      setLoan(prev => ({...prev, ...mapped}));
+      setImportMsg(`✅ ${imported} fields imported, ${unrecognized} fields not recognized`);
+      setEvaluated(false);
+      setTimeout(() => { setShowImportModal(false); setImportMsg(""); setImportJson(""); }, 2500);
+    } catch(e) {
+      setImportMsg("❌ Invalid JSON — please check your input");
+    }
   };
   const eligible=results.filter(r=>r.eligible), ineligible=results.filter(r=>!r.eligible);
   const gmi=n(loan.grossMonthlyIncome);
@@ -2575,7 +2720,8 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     const topRecHTML=_topRec?`<div style="background:#f0fdf4;border:2px solid #86efac;border-radius:8px;padding:14px;margin:12px 0"><p style="font-size:14px;font-weight:bold;color:#166534;margin:0 0 4px">Recommended: ${_topRec.option}</p><p style="font-size:12px;color:#15803d;margin:0">Because: ${_recReason?"the "+_recReason+" qualify them for this option per "+loan.loanType+" guidelines":"this is the highest-priority eligible option per "+loan.loanType+" loss mitigation waterfall"}${_topRec.note?" — "+_topRec.note:""}</p></div>`:eligible.length===0?`<div style="background:#fef2f2;border:2px solid #fca5a5;border-radius:8px;padding:14px;margin:12px 0"><p style="font-size:14px;font-weight:bold;color:#991b1b;margin:0">No Eligible Options — Adverse Action Required</p><p style="font-size:12px;color:#dc2626;margin:4px 0 0">Borrower does not qualify for any loss mitigation option under current ${loan.loanType} guidelines. Refer for foreclosure review.</p></div>`:"";
     w.document.write(`<html><head><title>LM Report — ${loan.loanType}</title><style>body{font-family:Arial,sans-serif;max-width:860px;margin:40px auto;color:#111;font-size:13px}h1{color:#1e3a5f;border-bottom:3px solid #1e3a5f;padding-bottom:8px}h2{color:#1e3a5f;border-bottom:1px solid #ddd;padding-bottom:4px;margin-top:24px}h3{margin:12px 0 4px;color:#1e3a5f}.eligible{background:#f0fdf4;border:1px solid #86efac;padding:12px;border-radius:6px;margin:8px 0}.ineligible{background:#fafafa;border:1px solid #e5e7eb;padding:8px;border-radius:4px;margin:4px 0}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:12px 0}.stat{background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:4px;text-align:center}.sl{font-size:11px;color:#64748b}.sv{font-weight:bold;color:#1e293b}.footer{margin-top:40px;font-size:11px;color:#888;border-top:1px solid #e5e7eb;padding-top:12px}</style></head><body>
     <h1>Loss Mitigation Evaluation Report</h1>
-    <p><strong>Date:</strong> ${new Date().toLocaleDateString()} &nbsp;|&nbsp; <strong>Loan Type:</strong> ${loan.loanType}${loan.loanNumber?` &nbsp;|&nbsp; <strong>Loan #:</strong> ${loan.loanNumber}`:""}${loan.borrowerName?` &nbsp;|&nbsp; <strong>Borrower:</strong> ${loan.borrowerName}`:""} &nbsp;|&nbsp; <strong>DLQ:</strong> ${loan.delinquencyMonths||"—"} months &nbsp;|&nbsp; <strong>Hardship:</strong> ${loan.hardshipType} (${loan.hardshipDuration})</p>
+    <p><strong>Evaluated:</strong> ${new Date().toLocaleString()} &nbsp;|&nbsp; <strong>Loan Type:</strong> ${loan.loanType}${loan.loanNumber?` &nbsp;|&nbsp; <strong>Loan #:</strong> ${loan.loanNumber}`:""}${loan.borrowerName?` &nbsp;|&nbsp; <strong>Borrower:</strong> ${loan.borrowerName}`:""} &nbsp;|&nbsp; <strong>DLQ:</strong> ${loan.delinquencyMonths||"—"} months &nbsp;|&nbsp; <strong>Hardship:</strong> ${loan.hardshipType} (${loan.hardshipDuration})</p>
+    <p style="font-size:11px;color:#64748b;margin:4px 0"><strong>Guidelines:</strong> ${GUIDELINE_VERSIONS[loan.loanType as keyof typeof GUIDELINE_VERSIONS]||loan.loanType}</p>
     ${topRecHTML}
     <div class="stats">
       <div class="stat"><div class="sl">Current UPB</div><div class="sv">${loan.upb?fmt$(n(loan.upb)):"—"}</div></div>
@@ -2659,6 +2805,60 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
           </div>
         </div>
       )}
+      {/* ── DB Setup Modal ── */}
+      {showDbSetup&&(
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowDbSetup(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="bg-slate-800 text-white px-5 py-4 flex items-center justify-between">
+              <span className="font-black text-base">⚙️ Database Setup SQL</span>
+              <button onClick={()=>setShowDbSetup(false)} className="text-slate-400 hover:text-white text-lg leading-none">×</button>
+            </div>
+            <div className="p-5">
+              <p className="text-sm text-slate-600 mb-3">Run this in your Supabase SQL Editor to enable Save/Load:</p>
+              <pre className="bg-slate-900 text-green-300 text-xs rounded-xl p-4 overflow-x-auto whitespace-pre-wrap font-mono">{`-- Run this in your Supabase SQL Editor to enable Save/Load:
+CREATE TABLE IF NOT EXISTS evaluations (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  loan_number text,
+  borrower_name text,
+  loan_type text,
+  created_at timestamptz DEFAULT now(),
+  loan_data jsonb NOT NULL,
+  results jsonb,
+  notes text,
+  guideline_version text,
+  evaluated_at timestamptz
+);
+
+-- Enable Row Level Security (recommended)
+ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;
+
+-- Allow all operations for authenticated users (adjust as needed)
+CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
+              <button onClick={()=>{navigator.clipboard.writeText(`CREATE TABLE IF NOT EXISTS evaluations (\n  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,\n  loan_number text,\n  borrower_name text,\n  loan_type text,\n  created_at timestamptz DEFAULT now(),\n  loan_data jsonb NOT NULL,\n  results jsonb,\n  notes text,\n  guideline_version text,\n  evaluated_at timestamptz\n);\n\nALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`);}} className="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all">📋 Copy SQL</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── JSON Import Modal ── */}
+      {showImportModal&&(
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowImportModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="bg-slate-800 text-white px-5 py-4 flex items-center justify-between">
+              <span className="font-black text-base">📥 Import Loan Data (JSON)</span>
+              <button onClick={()=>setShowImportModal(false)} className="text-slate-400 hover:text-white text-lg leading-none">×</button>
+            </div>
+            <div className="p-5">
+              <p className="text-xs text-slate-500 mb-3">Paste JSON from BytePro or your LOS. Recognized fields: LoanNumber, CurrentUPB, GrossMonthlyIncome, InterestRate, DelinquencyMonths, LoanType, and more.</p>
+              <textarea className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none" rows={10} value={importJson} onChange={e=>setImportJson(e.target.value)} placeholder={'{\n  "LoanNumber": "1234567890",\n  "CurrentUPB": "247500",\n  "GrossMonthlyIncome": "5200"\n}'}/>
+              {importMsg&&<div className={`mt-2 text-xs font-semibold px-3 py-2 rounded-lg ${importMsg.startsWith("✅")?"bg-emerald-50 text-emerald-700":"bg-red-50 text-red-700"}`}>{importMsg}</div>}
+              <div className="flex gap-2 mt-3">
+                <button onClick={importLoanData} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold py-2 rounded-lg transition-all">📥 Import</button>
+                <button onClick={()=>setShowImportModal(false)} className="px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-semibold py-2 rounded-lg transition-all">Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {/* ── Header ── */}
       <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-white px-6 py-4 shadow-xl">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -2692,10 +2892,15 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
             {/* Col 1 */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-y-auto" style={{maxHeight:"82vh"}}>
               <Sec title="📁 Loan Info">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
+                  <button onClick={()=>setShowImportModal(true)} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all border border-blue-100">📥 Import JSON</button>
+                </div>
                 <F label="Loan Number"><input className="border border-gray-300 rounded px-2 py-1 text-sm w-full" value={loan.loanNumber} onChange={e=>set("loanNumber",e.target.value)} placeholder="e.g. 1234567890"/></F>
                 <F label="Borrower Name"><input className="border border-gray-300 rounded px-2 py-1 text-sm w-full" value={loan.borrowerName} onChange={e=>set("borrowerName",e.target.value)} placeholder="Last, First"/></F>
               </Sec>
               <Sec title="💰 Financial Data">
+                <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                 <F label="Current UPB"><Num value={loan.upb} onChange={v=>set("upb",v)} placeholder="e.g. 250000" prefix="$"/></F>
                 <F label="Original UPB"><Num value={loan.originalUpb} onChange={v=>set("originalUpb",v)} placeholder="e.g. 275000" prefix="$"/></F>
                 <F label="Current Monthly Escrow"><Num value={loan.currentEscrow} onChange={v=>set("currentEscrow",v)} placeholder="e.g. 350" prefix="$"/></F>
@@ -2738,6 +2943,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
             {/* Col 2 */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-y-auto" style={{maxHeight:"82vh"}}>
               <Sec title="📅 Loan Dates">
+                <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                 <DateInput label="Note First Payment Date" value={loan.noteFirstPaymentDate} onChange={v=>set("noteFirstPaymentDate",v)}/>
                 <F label="Note Term (months)"><Num value={loan.noteTerm} onChange={v=>set("noteTerm",v)} placeholder="e.g. 360"/></F>
                 <DateInput label="Original Maturity Date" value={loan.originalMaturityDate} onChange={v=>set("originalMaturityDate",v)}/>
@@ -2759,6 +2965,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 })()}
               </Sec>
               <Sec title="🏠 Property & Occupancy">
+                <div className="flex items-center gap-1 mb-1"><SrcBadge type="borrower"/><span className="text-[10px] text-slate-400 ml-1">Requires borrower interview/docs</span></div>
                 <F label="Occupancy Status"><Sel value={loan.occupancyStatus} onChange={v=>set("occupancyStatus",v)} options={["Owner Occupied","Non-Owner Occupied","Vacant","Tenant Occupied"]}/></F>
                 {loan.loanType === "FHA" && <F label="Property Disposition"><Sel value={loan.propertyDisposition} onChange={v=>set("propertyDisposition",v)} options={["Principal Residence","Second Home","Investment"]}/></F>}
                 <F label="Property Condition"><Sel value={loan.propertyCondition} onChange={v=>set("propertyCondition",v)} options={["Standard","Condemned","Uninhabitable"]}/></F>
@@ -2767,6 +2974,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 <Tog label="Occupancy = Abandoned" value={loan.occupancyAbandoned} onChange={v=>set("occupancyAbandoned",v)}/>
               </Sec>
               <Sec title="⚠️ Hardship">
+                <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                 <F label="Hardship Type"><Sel value={loan.hardshipType} onChange={v=>set("hardshipType",v)} options={HARDSHIP_TYPES}/></F>
                 <F label="Hardship Duration"><Sel value={loan.hardshipDuration} onChange={v=>set("hardshipDuration",v)} options={["Short Term","Long Term","Permanent","Unknown","Resolved"]}/></F>
                 <F label="Delinquency (months)"><Num value={loan.delinquencyMonths} onChange={v=>set("delinquencyMonths",v)} placeholder="e.g. 4"/></F>
@@ -2780,6 +2988,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
             {/* Col 3 - loan type specific */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-y-auto" style={{maxHeight:"82vh"}}>
               <Sec title="🔧 Modification Flags">
+                <div className="flex items-center gap-1 mb-1"><SrcBadge type="borrower"/><span className="text-[10px] text-slate-400 ml-1">Requires borrower interview/docs</span></div>
                 <Tog label="Borrower Intent = Retention" value={loan.borrowerIntentRetention} onChange={v=>set("borrowerIntentRetention",v)}/>
                 {loan.loanType==="VA"&&(n(loan.modifiedPI)>0&&n(loan.currentPI)>0
                   ? <div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Modified P&amp;I ≤ 90% of old P&amp;I</span><span className={`font-semibold ${n(loan.modifiedPI)<=n(loan.currentPI)*0.90?"text-emerald-600":"text-red-500"}`}>{n(loan.modifiedPI)<=n(loan.currentPI)*0.90?"✅ Yes":"❌ No"} — auto (mod {fmt$(n(loan.modifiedPI))} vs 90% {fmt$(n(loan.currentPI)*0.90)})</span></div>
@@ -2805,6 +3014,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 const _combo=_piti>0&&_gmi>0?_piti/_gmi:null;
                 return (<>
                 <Sec title="FHA Home Retention (ML 2025-06)">
+                  <div className="flex items-center gap-1 mb-1"><SrcBadge type="borrower"/><SrcBadge type="calc"/><span className="text-[10px] text-slate-400 ml-1">Mixed: borrower docs + auto-computed</span></div>
                   <F label="Prior Home Retention Option (months ago — 24-month cooldown)"><Num value={loan.priorFHAHAMPMonths} onChange={v=>set("priorFHAHAMPMonths",v)} placeholder="0 = none"/></F>
                   {_pmms>0&&<div className="bg-blue-50 rounded p-2 text-xs text-blue-800 mt-1">Mod rate: PMMS {_pmms.toFixed(3)}% + 25bps = <strong>{_modRate.toFixed(3)}%</strong> (rounded to nearest 0.125%)</div>}
                   {_pi>0&&<div className="bg-emerald-50 rounded p-2 text-xs text-emerald-800 mt-0.5">25% P&I target: {fmt$(_pi*0.75)} + {fmt$(_esc)} escrow = <strong>{fmt$(_tgtPITI)}</strong> PITI</div>}
@@ -2820,11 +3030,17 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <F label="Months since prior FHA deferral (0 = never)"><Num value={loan.fhaPriorDeferralMonths} onChange={v=>set("fhaPriorDeferralMonths",v)} placeholder="0 = never"/></F>
                   {(()=>{const _origUpb=n(loan.originalUpb),_arr=n(loan.arrearagesToCapitalize);const _auto=_origUpb>0&&_arr>0?(_arr/_origUpb)>0.30:null;return _auto!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Arrears exceed 30% statutory limit</span><span className={`font-semibold ${_auto?"text-red-500":"text-emerald-600"}`}>{_auto?"⚠️ Yes":"✅ No"} — auto ({((_arr/_origUpb)*100).toFixed(1)}% of orig UPB)</span></div>:<Tog label="Arrears exceed 30% statutory limit (manual — enter Original UPB & Arrears to auto-compute)" value={loan.arrearsExceed30PctLimit} onChange={v=>set("arrearsExceed30PctLimit",v)}/>;})()}
                   {(()=>{const _origUpb=n(loan.originalUpb),_arr=n(loan.arrearagesToCapitalize),_gmi=n(loan.grossMonthlyIncome);const _arrearsAuto=_origUpb>0&&_arr>0?(_arr/_origUpb)>0.30:loan.arrearsExceed30PctLimit;if(!_arrearsAuto)return null;const _pmms=n(loan.pmmsRate),_esc=n(loan.currentEscrow),_pi=n(loan.currentPI);const _modRate=_pmms>0?Math.round((_pmms+0.25)/0.125)*0.125:0;const _tgtPITI=_pi>0?(_pi*0.75)+_esc:0;const _tgt=n(loan.targetPayment)||_tgtPITI;const _auto=_gmi>0&&_tgt>0?_tgt/_gmi<=0.40:null;return _auto!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Modified payment ≤ 40% GMI (arrears exceed 30% override)</span><span className={`font-semibold ${_auto?"text-emerald-600":"text-red-500"}`}>{_auto?"✅ Yes":"❌ No"} — auto (target {fmt$(_tgt)}, {(_tgt/_gmi*100).toFixed(1)}% GMI)</span></div>:<Tog label="Modified payment ≤ 40% GMI (manual)" value={loan.modPaymentLe40PctGMI} onChange={v=>set("modPaymentLe40PctGMI",v)}/>;})()}
-                  {_combo!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Combo payment ≤ 40% of income (Payment Supplement)</span><span className={`font-semibold ${_combo<=0.40?"text-emerald-600":"text-red-500"}`}>{_combo<=0.40?"✅ Yes":"❌ No"} — auto ({(_combo*100).toFixed(1)}% GMI)</span></div>:<Tog label="Combo payment ≤ 40% of income (Payment Supplement) (manual)" value={loan.comboPaymentLe40PctIncome} onChange={v=>set("comboPaymentLe40PctIncome",v)}/>}
-                  <Tog label="Failed TPP in current default episode" value={loan.failedTPP} onChange={v=>set("failedTPP",v)}/>
-                  {_rpp24!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Can repay within 24 months (RPP ≤ 40% GMI)</span><span className={`font-semibold ${_rpp24<=0.40?"text-emerald-600":"text-red-500"}`}>{_rpp24<=0.40?"✅ Yes":"❌ No"} — auto (pmt {fmt$(_piti+_arr/24)}, {(_rpp24*100).toFixed(1)}% GMI)</span></div>:<Tog label="Can repay within 24 months (manual)" value={loan.canRepayWithin24Months} onChange={v=>set("canRepayWithin24Months",v)}/>}
-                  <F label="Repayment Plan Term (months, max 24)"><Num value={loan.repayMonths} onChange={v=>set("repayMonths",Math.min(24,Math.max(1,parseInt(v)||24)).toString())} placeholder="24"/></F>
-                  {_rpp6!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Can repay within 6 months (RPP ≤ 40% GMI)</span><span className={`font-semibold ${_rpp6<=0.40?"text-emerald-600":"text-red-500"}`}>{_rpp6<=0.40?"✅ Yes":"❌ No"} — auto (pmt {fmt$(_piti+_arr/6)}, {(_rpp6*100).toFixed(1)}% GMI)</span></div>:<Tog label="Can repay within 6 months (manual)" value={loan.canRepayWithin6Months} onChange={v=>set("canRepayWithin6Months",v)}/>}
+                  <div className="border border-slate-200 rounded-lg overflow-hidden mt-1">
+                    <button type="button" onClick={()=>setFhaCalcExpanded(p=>!p)} className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors">
+                      <div className="flex items-center gap-1.5"><SrcBadge type="calc"/><span className="text-[10px] font-bold text-slate-500">Auto-Computed (from financial data)</span></div>
+                      <span className="text-[10px] text-slate-400">{fhaCalcExpanded?"▲":"▼"}</span>
+                    </button>
+                    {fhaCalcExpanded&&<div className="px-3 py-2 space-y-1 bg-white">
+                      {_combo!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Combo payment ≤ 40% of income (Payment Supplement)</span><span className={`font-semibold ${_combo<=0.40?"text-emerald-600":"text-red-500"}`}>{_combo<=0.40?"✅ Yes":"❌ No"} — auto ({(_combo*100).toFixed(1)}% GMI)</span></div>:<Tog label="Combo payment ≤ 40% of income (Payment Supplement) (manual)" value={loan.comboPaymentLe40PctIncome} onChange={v=>set("comboPaymentLe40PctIncome",v)}/>}
+                      {_rpp24!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Can repay within 24 months (RPP ≤ 40% GMI)</span><span className={`font-semibold ${_rpp24<=0.40?"text-emerald-600":"text-red-500"}`}>{_rpp24<=0.40?"✅ Yes":"❌ No"} — auto (pmt {fmt$(_piti+_arr/24)}, {(_rpp24*100).toFixed(1)}% GMI)</span></div>:<Tog label="Can repay within 24 months (manual)" value={loan.canRepayWithin24Months} onChange={v=>set("canRepayWithin24Months",v)}/>}
+                      {_rpp6!==null?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Can repay within 6 months (RPP ≤ 40% GMI)</span><span className={`font-semibold ${_rpp6<=0.40?"text-emerald-600":"text-red-500"}`}>{_rpp6<=0.40?"✅ Yes":"❌ No"} — auto (pmt {fmt$(_piti+_arr/6)}, {(_rpp6*100).toFixed(1)}% GMI)</span></div>:<Tog label="Can repay within 6 months (manual)" value={loan.canRepayWithin6Months} onChange={v=>set("canRepayWithin6Months",v)}/>}
+                    </div>}
+                  </div>
                   <Tog label="Forbearance requested" value={loan.requestedForbearance} onChange={v=>set("requestedForbearance",v)}/>
                   <Tog label="Verified unemployment (Special Forbearance)" value={loan.verifiedUnemployment} onChange={v=>set("verifiedUnemployment",v)}/>
                   <Tog label="No continuous income (Special Forbearance)" value={!loan.continuousIncome} onChange={v=>set("continuousIncome",!v)}/>
@@ -2833,6 +3049,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <Tog label="Assumption in process" value={loan.assumptionInProcess} onChange={v=>set("assumptionInProcess",v)}/>
                 </Sec>
                 <Sec title="FHA Disaster">
+                  <div className="flex items-center gap-1 mb-1"><SrcBadge type="borrower"/><span className="text-[10px] text-slate-400 ml-1">Requires borrower docs / FEMA verification</span></div>
                   <Tog label="Verified Disaster Hardship" value={loan.verifiedDisaster} onChange={v=>set("verifiedDisaster",v)}/>
                   {loan.verifiedDisaster&&(<>
                     <Tog label="Property in PDMA" value={loan.propertyInPDMA} onChange={v=>set("propertyInPDMA",v)}/>
@@ -2948,6 +3165,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                 </Sec>
                 {loan.fnmaImminentDefault && (
                   <Sec title="FNMA – Imminent Default Business Rules">
+                    <div className="flex items-center gap-1 mb-1"><SrcBadge type="calc"/><span className="text-[10px] text-slate-400 ml-1">Auto-derived from financial inputs</span></div>
                     <div className="bg-amber-50 rounded p-2 text-xs text-amber-700 mb-2">Required when servicer marks borrower as Imminent Default (current/&lt;60 DLQ)</div>
                     <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">Rule 1 (all required)</div>
                     <div className="flex items-center justify-between gap-3 py-0.5"><span className="text-xs text-slate-600 flex-1 leading-snug">Primary Residence (from Property Type above)</span><span className={`text-xs font-bold px-2 py-0.5 rounded ${loan.fnmaPropertyType === "Principal Residence" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{loan.fnmaPropertyType === "Principal Residence" ? "✅ Yes" : "❌ No"}</span></div>
@@ -2963,6 +3181,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   </Sec>
                 )}
                 <Sec title="FNMA – Prior Workout History">
+                  <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                   <F label="Prior deferred balance (non-interest-bearing forbearance from prior deferrals — added to UPB for Flex Mod)"><Num value={loan.fnmaPriorDeferredUPB} onChange={v=>set("fnmaPriorDeferredUPB",v)} placeholder="0" prefix="$"/></F>
                   <F label="Months since last non-disaster payment deferral (0 = never)"><Num value={loan.fnmaPriorDeferralMonths} onChange={v=>set("fnmaPriorDeferralMonths",v)} placeholder="0 = never"/></F>
                   <F label="Cumulative months deferred (lifetime total, prior to this evaluation)"><Num value={loan.fnmaCumulativeDeferredMonths} onChange={v=>set("fnmaCumulativeDeferredMonths",v)} placeholder="0"/></F>
@@ -3018,12 +3237,14 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                   <Tog label="Recourse or indemnification arrangement" value={loan.fhlmcRecourse} onChange={v=>set("fhlmcRecourse",v)}/>
                 </Sec>
                 <Sec title="FHLMC – Imminent Default (current/&lt;60 DLQ)">
+                  <div className="flex items-center gap-1 mb-1"><SrcBadge type="calc"/><span className="text-[10px] text-slate-400 ml-1">Auto-derived from financial inputs</span></div>
                   {n(loan.cashReservesAmount)>0?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Cash Reserves &lt; $25,000</span><span className={`font-semibold ${n(loan.cashReservesAmount)<25000?"text-emerald-600":"text-red-500"}`}>{n(loan.cashReservesAmount)<25000?"✅ Yes":"❌ No"} — auto ({fmt$(n(loan.cashReservesAmount))})</span></div>:<Tog label="Cash Reserves < $25,000 (manual — enter Cash Reserves above to auto-compute)" value={loan.fhlmcCashReservesLt25k} onChange={v=>set("fhlmcCashReservesLt25k",v)}/>}
                   <F label="FICO Score (middle/lower method)"><Num value={loan.fhlmcFICO} onChange={v=>set("fhlmcFICO",v)} placeholder="e.g. 620"/></F>
                   {n(loan.currentPITI)>0&&n(loan.grossMonthlyIncome)>0?<div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Pre-Mod Housing Expense / GMI (%)</span><span className="font-semibold text-blue-700">Auto: {(n(loan.currentPITI)/n(loan.grossMonthlyIncome)*100).toFixed(1)}% {n(loan.currentPITI)/n(loan.grossMonthlyIncome)*100>40?"⚠️ >40% (Rule 2 met)":"— ≤40%"}</span></div>:<F label="Pre-Mod Housing Expense / GMI (%)"><Num value={loan.fhlmcHousingExpenseRatio} onChange={v=>set("fhlmcHousingExpenseRatio",v)} placeholder="e.g. 45"/></F>}
                   <Tog label="2+ 30-day DLQ in most recent 6-month period" value={loan.fhlmcPrior30DayDLQ6Mo} onChange={v=>set("fhlmcPrior30DayDLQ6Mo",v)}/>
                 </Sec>
                 <Sec title="FHLMC – Prior Workout History">
+                  <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                   <F label="Prior deferred balance (non-interest-bearing forbearance from prior deferrals — added to UPB for Flex Mod)"><Num value={loan.fhlmcPriorDeferredUPB} onChange={v=>set("fhlmcPriorDeferredUPB",v)} placeholder="0" prefix="$"/></F>
                   <F label="Cumulative months deferred (lifetime total, prior to this evaluation)"><Num value={loan.fhlmcCumulativeDeferredMonths} onChange={v=>set("fhlmcCumulativeDeferredMonths",v)} placeholder="0"/></F>
                   <F label="Months since last non-disaster payment deferral (0 = never)"><Num value={loan.fhlmcPriorDeferralMonths} onChange={v=>set("fhlmcPriorDeferralMonths",v)} placeholder="0 = never"/></F>
@@ -3088,6 +3309,7 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
               {supabaseConfigured
                 ? <button onClick={loadCases} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-2.5 rounded-xl text-sm mt-2 shadow-sm transition-all">📂 Load Case</button>
                 : <div className="mt-2 text-xs text-slate-400 text-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">Supabase not configured — set up .env to enable save/load</div>}
+              <button onClick={()=>setShowDbSetup(true)} className="w-full mt-2 text-xs text-slate-400 hover:text-slate-600 border border-dashed border-slate-200 hover:border-slate-300 py-2 rounded-xl transition-all">📋 View Setup SQL</button>
             </div>
           </div>
         )}
@@ -3111,6 +3333,17 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                     : null}
                 </div>
                 {saveToast&&<div className="bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs px-3 py-2 rounded-xl mb-3 font-semibold">{saveToast}</div>}
+                {validationWarnings.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+                    <div className="text-sm font-bold text-amber-800 mb-2">⚠️ Input Validation Warnings</div>
+                    {validationWarnings.map((w, i) => (
+                      <div key={i} className="text-xs text-amber-700 flex gap-2 py-0.5">
+                        <span>•</span><span>{w}</span>
+                      </div>
+                    ))}
+                    <div className="text-xs text-amber-500 mt-2">These are warnings only — evaluation results are shown below</div>
+                  </div>
+                )}
                 {/* Recommended Path */}
                 {(()=>{
                   const {waterfallEligible,extras,topOption}=computeWaterfall(loan.loanType,eligible);
@@ -3197,6 +3430,47 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
                     {saveToast&&<div className="mt-1.5 text-xs text-emerald-700 font-semibold">{saveToast}</div>}
                   </div>
                 )}
+                {/* Trial Payment Plan Calculator */}
+                {(()=>{
+                  const eligibleMods = eligible.filter(r => r.option.includes("Modification") || r.option.includes("Mod"));
+                  if (eligibleMods.length === 0) return null;
+                  const topMod = eligibleMods[0];
+                  const terms = calcApprovalTerms(topMod.option, loan);
+                  const newPITI = terms?.["New Monthly PITI"];
+                  if (!newPITI || newPITI === "N/A" || String(newPITI).startsWith("Enter")) return null;
+                  const effDate = loan.approvalEffectiveDate || new Date().toISOString().split("T")[0];
+                  // Get first of month 2 months after effective date
+                  const firstOfNextMonth = calcNewFirstPayment(effDate);
+                  const pmt1 = firstOfNextMonth;
+                  const pmt2 = addMonths(firstOfNextMonth, 1);
+                  const pmt3 = addMonths(firstOfNextMonth, 2);
+                  const modEffDate = addMonths(firstOfNextMonth, 3);
+                  const needsIncomeDoc = !topMod.option.includes("Streamlined") && !topMod.option.includes("Payment Deferral");
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
+                      <div className="text-sm font-black text-blue-800 mb-3">📅 Trial Payment Plan — {topMod.option}</div>
+                      <div className="bg-white rounded-lg p-3 border border-blue-100 mb-3">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-xs text-slate-500 font-semibold">Trial Payment (new PITI)</span>
+                          <span className="text-sm font-black text-blue-700">{newPITI}/mo</span>
+                        </div>
+                        <div className="space-y-1">
+                          {[["Payment 1",pmt1],["Payment 2",pmt2],["Payment 3",pmt3]].map(([label,date])=>(
+                            <div key={label} className="flex justify-between items-center text-xs">
+                              <span className="text-slate-500">{label}</span>
+                              <span className="font-semibold text-slate-700">{fmtDate(date)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex gap-2"><span className="text-emerald-600 font-semibold">If Successful:</span><span className="text-slate-700">Modification effective {fmtDate(modEffDate)} — loan permanently modified</span></div>
+                        <div className="flex gap-2"><span className="text-red-500 font-semibold">If Failed:</span><span className="text-slate-700">Borrower returns to default — servicer must re-evaluate options</span></div>
+                        <div className="flex gap-2"><span className="text-slate-500 font-semibold">Income Doc:</span><span className="text-slate-700">{needsIncomeDoc ? "Required prior to permanent modification" : "Not required — streamlined review"}</span></div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Ineligible Options</div>
                 {ineligible.map((r,i)=>{
                   const fail=r.nodes?.find(nd=>!nd.pass);
