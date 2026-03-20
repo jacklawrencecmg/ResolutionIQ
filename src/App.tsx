@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { supabase, supabaseConfigured } from "./supabase";
 import resolutionIQLogo from "../ResolutionIQ_logo.svg";
 
@@ -11,8 +11,8 @@ const GUIDELINE_VERSIONS = {
   FHLMC: "Single-Family Guide Ch. 9200, Bulletin 2026-2",
   FNMA: "Servicing Guide D2-3.2, updated 2025",
 };
-const TABS = ["inputs","results","audit","report","compare"];
-const TAB_LABELS = { inputs:"📋 Inputs", results:"✅ Results", audit:"🔍 Audit Trail", report:"📄 Report", compare:"⚖️ Compare" };
+const TABS = ["dashboard","inputs","results","audit","report","compare"];
+const TAB_LABELS = { dashboard:"📊 Dashboard", inputs:"📋 Inputs", results:"✅ Results", audit:"🔍 Audit Trail", report:"📄 Report", compare:"⚖️ Compare" };
 const HARDSHIP_TYPES = ["Reduction in Income","Unemployment","Business Failure","Increase in Housing Expenses","Property Problem","Unknown","Disaster"];
 const STANDARD_HARDSHIPS = ["Unemployment","Business Failure","Increase in Housing Expenses","Property Problem","Reduction in Income","Unknown"];
 
@@ -2538,6 +2538,35 @@ const FIELD_MAP: Record<string, string|null> = {
   "HardshipReason": "hardshipType",
 };
 
+// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component<{children: React.ReactNode}, {hasError: boolean, error: string}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: "" };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error: error?.message || "Unknown error" };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md text-center">
+            <div className="text-4xl mb-3">⚠️</div>
+            <div className="text-xl font-black text-slate-800 mb-2">Something went wrong</div>
+            <div className="text-sm text-slate-500 mb-4">{this.state.error}</div>
+            <button onClick={() => { this.setState({ hasError: false, error: "" }); window.location.reload(); }}
+              className="bg-emerald-700 text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-emerald-800">
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 interface Profile { id:string; email:string; full_name:string; approved:boolean; role:string; }
 
@@ -2591,6 +2620,22 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   const [fhaCalcExpanded,setFhaCalcExpanded]=useState(true);
   const [fhlmcIDExpanded,setFhlmcIDExpanded]=useState(true);
   const [fnmaIDExpanded,setFnmaIDExpanded]=useState(true);
+  // Dashboard state
+  const [dashCases,setDashCases]=useState<any[]>([]);
+  const [dashLoading,setDashLoading]=useState(false);
+  const [dashSearch,setDashSearch]=useState("");
+  const [dashFilter,setDashFilter]=useState("all");
+  const [dashStatus,setDashStatus]=useState("all");
+  // Offline state
+  const [isOffline,setIsOffline]=useState(!navigator.onLine);
+  // Share toast
+  const [shareToast,setShareToast]=useState(false);
+  // Quick LOS Import state
+  const [losLoanNum,setLosLoanNum]=useState("");
+  const [losUpb,setLosUpb]=useState("");
+  const [losDlq,setLosDlq]=useState("");
+  const [losPiti,setLosPiti]=useState("");
+  const [losGmi,setLosGmi]=useState("");
   // Save/Load state
   const [caseNotes,setCaseNotes]=useState("");
   const [saveToast,setSaveToast]=useState("");
@@ -2615,16 +2660,88 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     setAdminMsg("Request denied and account removed.");
     setTimeout(()=>setAdminMsg(""),4000);
   };
+  // Offline detection
+  useEffect(() => {
+    const on = () => setIsOffline(false);
+    const off = () => setIsOffline(true);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+
+  // URL param: load shared case on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const caseParam = params.get("case");
+    if (caseParam) {
+      try {
+        const decoded = JSON.parse(decodeURIComponent(atob(caseParam)));
+        setLoan((prev: any) => ({ ...prev, ...decoded }));
+        setTab("results");
+        // auto-evaluate after state settles
+        setTimeout(() => {
+          setResults(evalLoan({ ...initLoan, ...decoded }));
+          setValidationWarnings(validateLoan({ ...initLoan, ...decoded }));
+          setEvaluated(true);
+        }, 50);
+      } catch {}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Dashboard loader
+  const loadDashboard = useCallback(async () => {
+    if (!supabaseConfigured) return;
+    setDashLoading(true);
+    const { data } = await supabase
+      .from("evaluations")
+      .select("id, loan_number, borrower_name, loan_type, created_at, notes, results, status, loan_data")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    setDashCases(data || []);
+    setDashLoading(false);
+  }, []);
+
+  useEffect(() => { if (tab === "dashboard") loadDashboard(); }, [tab, loadDashboard]);
+
+  const updateCaseStatus = async (id: string, status: string) => {
+    await supabase.from("evaluations").update({ status }).eq("id", id);
+    setDashCases(prev => prev.map(c => c.id === id ? { ...c, status } : c));
+  };
+
+  const shareEvaluation = () => {
+    try {
+      const encoded = btoa(encodeURIComponent(JSON.stringify(loan)));
+      const url = `${window.location.origin}${window.location.pathname}?case=${encoded}`;
+      navigator.clipboard.writeText(url);
+      setShareToast(true);
+      setTimeout(() => setShareToast(false), 2000);
+    } catch {}
+  };
+
   const set=useCallback((k,v)=>{setLoan(p=>({...p,[k]:v}));setEvaluated(false);},[]);
   const set2=useCallback((k,v)=>{setLoan2(p=>({...p,[k]:v}));setEvaluated2(false);},[]);
   const evalLoan=(l)=>l.loanType==="FHA"?evaluateFHA(l):l.loanType==="USDA"?evaluateUSDA(l):l.loanType==="VA"?evaluateVA(l):l.loanType==="FNMA"?evaluateFNMA(l):evaluateFHLMC(l);
-  const evaluate=()=>{setResults(evalLoan(loan));setValidationWarnings(validateLoan(loan));setEvaluated(true);setTab("results");setAiResponse("");};
+  const evaluate=()=>{
+    try {
+      setResults(evalLoan(loan));
+      setValidationWarnings(validateLoan(loan));
+      setEvaluated(true);
+      setTab("results");
+      setAiResponse("");
+    } catch(e:any) {
+      setSaveToast("Evaluation error: "+(e?.message||String(e)));
+      setTimeout(()=>setSaveToast(""),4000);
+    }
+  };
   const evaluate2=()=>{setResults2(evalLoan(loan2));setEvaluated2(true);};
 
   const saveCase=async()=>{
     if(!supabaseConfigured){setSaveToast("Supabase not configured.");setTimeout(()=>setSaveToast(""),3000);return;}
     try{
       const topElig=results.filter(r=>r.eligible)[0];
+      const session = await supabase.auth.getSession();
+      const userId = session.data.session?.user?.id;
       await supabase.from("evaluations").insert({
         loan_number:loan.loanNumber||null,
         borrower_name:loan.borrowerName||null,
@@ -2634,6 +2751,8 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
         notes:caseNotes||null,
         guideline_version:GUIDELINE_VERSIONS[loan.loanType as keyof typeof GUIDELINE_VERSIONS]||null,
         evaluated_at:new Date().toISOString(),
+        status:"evaluated",
+        ...(userId ? { user_id: userId } : {}),
       });
       setSaveToast("✅ Case saved!");
       setTimeout(()=>setSaveToast(""),3000);
@@ -2688,6 +2807,14 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     }
   };
   const eligible=results.filter(r=>r.eligible), ineligible=results.filter(r=>!r.eligible);
+  const filteredCases = dashCases.filter(c => {
+    const matchSearch = !dashSearch ||
+      c.loan_number?.toLowerCase().includes(dashSearch.toLowerCase()) ||
+      c.borrower_name?.toLowerCase().includes(dashSearch.toLowerCase());
+    const matchType = dashFilter === "all" || c.loan_type === dashFilter;
+    const matchStatus = dashStatus === "all" || (c.status || "open") === dashStatus;
+    return matchSearch && matchType && matchStatus;
+  });
   const gmi=n(loan.grossMonthlyIncome);
   const target31=gmi>0?(gmi*0.31).toFixed(2):null;
   const target40=gmi>0?(gmi*0.40).toFixed(2):null;
@@ -2826,15 +2953,18 @@ CREATE TABLE IF NOT EXISTS evaluations (
   results jsonb,
   notes text,
   guideline_version text,
-  evaluated_at timestamptz
+  evaluated_at timestamptz,
+  status text DEFAULT 'open',
+  user_id uuid REFERENCES auth.users(id)
 );
 
--- Enable Row Level Security (recommended)
+-- Enable Row Level Security
 ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;
 
--- Allow all operations for authenticated users (adjust as needed)
-CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
-              <button onClick={()=>{navigator.clipboard.writeText(`CREATE TABLE IF NOT EXISTS evaluations (\n  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,\n  loan_number text,\n  borrower_name text,\n  loan_type text,\n  created_at timestamptz DEFAULT now(),\n  loan_data jsonb NOT NULL,\n  results jsonb,\n  notes text,\n  guideline_version text,\n  evaluated_at timestamptz\n);\n\nALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`);}} className="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all">📋 Copy SQL</button>
+-- Users see only their own cases
+CREATE POLICY "Users see own cases" ON evaluations
+  FOR ALL USING (auth.uid() = user_id);`}</pre>
+              <button onClick={()=>{navigator.clipboard.writeText(`CREATE TABLE IF NOT EXISTS evaluations (\n  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,\n  loan_number text,\n  borrower_name text,\n  loan_type text,\n  created_at timestamptz DEFAULT now(),\n  loan_data jsonb NOT NULL,\n  results jsonb,\n  notes text,\n  guideline_version text,\n  evaluated_at timestamptz,\n  status text DEFAULT 'open',\n  user_id uuid REFERENCES auth.users(id)\n);\n\nALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Users see own cases" ON evaluations\n  FOR ALL USING (auth.uid() = user_id);`);}} className="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all">📋 Copy SQL</button>
             </div>
           </div>
         </div>
@@ -2878,17 +3008,130 @@ CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
           </div>
         </div>
       </div>
+      {/* ── Offline Banner ── */}
+      {isOffline && (
+        <div className="bg-amber-500 text-white text-xs text-center py-1 font-bold">
+          ⚠️ No internet connection — evaluation works offline, save/load unavailable
+        </div>
+      )}
+      {/* ── Share Toast ── */}
+      {shareToast && (
+        <div className="fixed top-4 right-4 z-50 bg-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-xl shadow-lg">
+          🔗 Link copied!
+        </div>
+      )}
       {/* ── Tab Bar ── */}
       <div className="bg-white border-b border-slate-200 shadow-sm px-6">
-        <div className="max-w-7xl mx-auto flex items-center gap-1">
-          {TABS.map(t=>(<button key={t} onClick={()=>setTab(t)} className={`px-4 py-3 text-xs font-bold transition-all border-b-2 -mb-px ${tab===t?"border-emerald-600 text-emerald-700":"border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"}`}>{TAB_LABELS[t]}</button>))}
+        <div className="max-w-7xl mx-auto flex items-center gap-1 flex-wrap">
+          {TABS.map(t=>(<button key={t} onClick={()=>setTab(t)} className={`px-2 py-1.5 sm:px-3 sm:py-2 text-xs font-bold transition-all border-b-2 -mb-px ${tab===t?"border-emerald-600 text-emerald-700":"border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"}`}><span className="hidden sm:inline">{TAB_LABELS[t as keyof typeof TAB_LABELS]}</span><span className="sm:hidden">{TAB_LABELS[t as keyof typeof TAB_LABELS].split(" ")[0]}</span></button>))}
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto p-5">
+        {/* ── DASHBOARD ── */}
+        {tab==="dashboard"&&(
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="text-xl font-black text-slate-800">Case Dashboard</div>
+              <button onClick={loadDashboard} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">🔄 Refresh</button>
+              <button onClick={() => setTab("inputs")} className="text-xs bg-emerald-700 text-white hover:bg-emerald-800 px-3 py-1.5 rounded-lg ml-auto">+ New Evaluation</button>
+            </div>
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              <input className="border rounded-lg px-3 py-1.5 text-sm flex-1 min-w-48" placeholder="Search loan # or borrower..." value={dashSearch} onChange={e=>setDashSearch(e.target.value)}/>
+              <select className="border rounded-lg px-3 py-1.5 text-sm" value={dashFilter} onChange={e=>setDashFilter(e.target.value)}>
+                <option value="all">All Types</option>
+                {["FHA","USDA","VA","FNMA","FHLMC"].map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+              <select className="border rounded-lg px-3 py-1.5 text-sm" value={dashStatus} onChange={e=>setDashStatus(e.target.value)}>
+                {["all","open","evaluated","recommended","approved","implemented"].map(s=><option key={s} value={s}>{s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
+              </select>
+            </div>
+            {/* Stats row */}
+            {dashCases.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {(()=>{
+                  const statusList = ["open","evaluated","recommended","approved","implemented"];
+                  const counts: Record<string,number> = {};
+                  dashCases.forEach(c => { const s = c.status || "open"; counts[s] = (counts[s]||0)+1; });
+                  const colorMap: Record<string,string> = {open:"bg-slate-100 text-slate-600",evaluated:"bg-blue-100 text-blue-700",recommended:"bg-amber-100 text-amber-700",approved:"bg-emerald-100 text-emerald-700",implemented:"bg-purple-100 text-purple-700"};
+                  return [<div key="total" className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-center"><div className="text-xs text-slate-400 font-semibold">Total</div><div className="text-lg font-black text-slate-700">{dashCases.length}</div></div>,
+                    ...statusList.filter(s=>counts[s]).map(s=><div key={s} className={`${colorMap[s]} rounded-xl px-4 py-2 text-center`}><div className="text-xs font-semibold capitalize">{s}</div><div className="text-lg font-black">{counts[s]}</div></div>)];
+                })()}
+              </div>
+            )}
+            {/* Table */}
+            {!supabaseConfigured
+              ? <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 text-center text-amber-700 text-sm">Supabase not configured — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable the dashboard.</div>
+              : dashLoading
+                ? <div className="text-center py-10 text-slate-400">Loading...</div>
+                : (
+                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          {["Loan #","Borrower","Type","DLQ","Top Option","Status","Date","Actions"].map(h=>(
+                            <th key={h} className="text-left px-4 py-3 text-xs font-bold text-slate-500 uppercase tracking-wide">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredCases.map(c => {
+                          const topOption = c.results?.find((r:any) => r.eligible)?.option || "—";
+                          const dlq = c.loan_data?.delinquencyMonths || "—";
+                          const statusColors: Record<string,string> = {open:"bg-slate-100 text-slate-600",evaluated:"bg-blue-100 text-blue-700",recommended:"bg-amber-100 text-amber-700",approved:"bg-emerald-100 text-emerald-700",implemented:"bg-purple-100 text-purple-700"};
+                          const sc = statusColors[c.status as string] || statusColors.open;
+                          return (
+                            <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
+                              <td className="px-4 py-3 font-mono text-xs">{c.loan_number || "—"}</td>
+                              <td className="px-4 py-3">{c.borrower_name || "—"}</td>
+                              <td className="px-4 py-3"><span className="bg-slate-100 text-slate-700 text-xs font-bold px-2 py-0.5 rounded">{c.loan_type}</span></td>
+                              <td className="px-4 py-3">{dlq}{dlq !== "—" ? "mo" : ""}</td>
+                              <td className="px-4 py-3 text-xs text-emerald-700 font-semibold max-w-32 truncate">{topOption}</td>
+                              <td className="px-4 py-3">
+                                <select className={`text-xs font-bold px-2 py-0.5 rounded border-0 cursor-pointer ${sc}`} value={c.status || "open"} onChange={e=>updateCaseStatus(c.id, e.target.value)}>
+                                  {["open","evaluated","recommended","approved","implemented"].map(s=><option key={s} value={s}>{s}</option>)}
+                                </select>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-slate-400">{new Date(c.created_at).toLocaleDateString()}</td>
+                              <td className="px-4 py-3">
+                                <button className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold" onClick={()=>{ loadCase(c); setTab("inputs"); }}>Open →</button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {filteredCases.length === 0 && <div className="text-center py-10 text-slate-400 text-sm">No cases found{dashSearch ? ` matching "${dashSearch}"` : ""}</div>}
+                  </div>
+                )
+            }
+          </div>
+        )}
+
         {/* ── INPUTS ── */}
         {tab==="inputs"&&(
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div>
+          {/* Quick LOS Import bar */}
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-4">
+            <div className="text-xs font-black text-blue-700 uppercase tracking-wide mb-2">📋 Quick LOS Import</div>
+            <div className="flex flex-wrap gap-2 items-end">
+              <div><div className="text-[10px] text-blue-600 font-semibold mb-0.5">Loan #</div><input className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs w-28" value={losLoanNum} onChange={e=>setLosLoanNum(e.target.value)} placeholder="1234567890"/></div>
+              <div><div className="text-[10px] text-blue-600 font-semibold mb-0.5">UPB ($)</div><input className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs w-24" value={losUpb} onChange={e=>setLosUpb(e.target.value)} placeholder="250000"/></div>
+              <div><div className="text-[10px] text-blue-600 font-semibold mb-0.5">DLQ (mo)</div><input className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs w-16" value={losDlq} onChange={e=>setLosDlq(e.target.value)} placeholder="4"/></div>
+              <div><div className="text-[10px] text-blue-600 font-semibold mb-0.5">PITI ($)</div><input className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs w-20" value={losPiti} onChange={e=>setLosPiti(e.target.value)} placeholder="1800"/></div>
+              <div><div className="text-[10px] text-blue-600 font-semibold mb-0.5">GMI ($)</div><input className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs w-20" value={losGmi} onChange={e=>setLosGmi(e.target.value)} placeholder="5200"/></div>
+              <button onClick={()=>{
+                if(losLoanNum) set("loanNumber",losLoanNum);
+                if(losUpb) set("upb",losUpb);
+                if(losDlq) set("delinquencyMonths",losDlq);
+                if(losPiti) set("currentPITI",losPiti);
+                if(losGmi) set("grossMonthlyIncome",losGmi);
+                setLosLoanNum(""); setLosUpb(""); setLosDlq(""); setLosPiti(""); setLosGmi("");
+              }} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-1.5 rounded-lg transition-all">Apply →</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 md:grid-cols-2 gap-5">
             {/* Col 1 */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-y-auto" style={{maxHeight:"82vh"}}>
               <Sec title="📁 Loan Info">
@@ -2989,7 +3232,19 @@ CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 overflow-y-auto" style={{maxHeight:"82vh"}}>
               <Sec title="🔧 Modification Flags">
                 <div className="flex items-center gap-1 mb-1"><SrcBadge type="borrower"/><span className="text-[10px] text-slate-400 ml-1">Requires borrower interview/docs</span></div>
-                <Tog label="Borrower Intent = Retention" value={loan.borrowerIntentRetention} onChange={v=>set("borrowerIntentRetention",v)}/>
+                <div className="mb-2">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Borrower Intent</div>
+                  <div className="flex rounded-lg overflow-hidden border border-slate-200">
+                    <button onClick={() => set("borrowerIntentRetention", true)}
+                      className={`flex-1 py-2 text-sm font-bold transition-colors ${loan.borrowerIntentRetention ? "bg-emerald-600 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                      🏠 Retain Home
+                    </button>
+                    <button onClick={() => set("borrowerIntentRetention", false)}
+                      className={`flex-1 py-2 text-sm font-bold transition-colors ${!loan.borrowerIntentRetention ? "bg-red-500 text-white" : "bg-white text-slate-500 hover:bg-slate-50"}`}>
+                      🔑 Sell / Deed Back
+                    </button>
+                  </div>
+                </div>
                 {loan.loanType==="VA"&&(n(loan.modifiedPI)>0&&n(loan.currentPI)>0
                   ? <div className="flex items-center justify-between py-1 text-xs"><span className="text-slate-600">Modified P&amp;I ≤ 90% of old P&amp;I</span><span className={`font-semibold ${n(loan.modifiedPI)<=n(loan.currentPI)*0.90?"text-emerald-600":"text-red-500"}`}>{n(loan.modifiedPI)<=n(loan.currentPI)*0.90?"✅ Yes":"❌ No"} — auto (mod {fmt$(n(loan.modifiedPI))} vs 90% {fmt$(n(loan.currentPI)*0.90)})</span></div>
                   : <Tog label="Modified P&I ≤ 90% of old P&I (manual — enter Modified P&I & Current P&I to auto-compute)" value={loan.modifiedPILe90PctOld} onChange={v=>set("modifiedPILe90PctOld",v)}/>)}
@@ -3312,11 +3567,12 @@ CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
               <button onClick={()=>setShowDbSetup(true)} className="w-full mt-2 text-xs text-slate-400 hover:text-slate-600 border border-dashed border-slate-200 hover:border-slate-300 py-2 rounded-xl transition-all">📋 View Setup SQL</button>
             </div>
           </div>
+          </div>
         )}
 
         {/* ── RESULTS ── */}
         {tab==="results"&&(
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             <div className="overflow-y-auto" style={{maxHeight:"82vh"}}>
               {!evaluated?<div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-10 text-center text-slate-400">
                 <div className="text-4xl mb-3">🔍</div>
@@ -3327,7 +3583,8 @@ CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
                   <span className="font-black text-slate-800 text-lg">{loan.loanType}</span>
                   <span className="text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-bold">{eligible.length} eligible</span>
                   <span className="text-xs bg-red-100 text-red-700 px-2.5 py-1 rounded-full font-bold">{ineligible.length} ineligible</span>
-                  <button onClick={printReport} className="ml-auto text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">🖨 Print Report</button>
+                  <button onClick={shareEvaluation} className="ml-auto text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">🔗 Share</button>
+                  <button onClick={printReport} className="text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">🖨 Print Report</button>
                   {supabaseConfigured
                     ? <button onClick={saveCase} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">💾 Save Case</button>
                     : null}
@@ -3598,7 +3855,7 @@ CREATE POLICY "Allow all" ON evaluations FOR ALL USING (true);`}</pre>
         {/* ── COMPARE ── */}
         {tab==="compare"&&(
           <div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
               {/* Loan A card */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -3773,37 +4030,37 @@ export default function App() {
     </div>
   );
 
-  if(!supabaseConfigured) return shell(
+  if(!supabaseConfigured) return <ErrorBoundary>{shell(
     <div className="bg-red-900/40 border border-red-700 rounded-2xl p-6 text-center space-y-2">
       <p className="text-red-300 font-bold">Configuration Error</p>
       <p className="text-red-400 text-sm">Supabase environment variables are not set. Add <code className="bg-red-900/60 px-1 rounded">VITE_SUPABASE_URL</code> and <code className="bg-red-900/60 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> as GitHub repository secrets, then re-run the deployment.</p>
     </div>
-  );
+  )}</ErrorBoundary>;
 
-  if(!authReady) return shell(<div className="text-center text-slate-400 py-8 text-sm">Loading…</div>);
+  if(!authReady) return <ErrorBoundary>{shell(<div className="text-center text-slate-400 py-8 text-sm">Loading…</div>)}</ErrorBoundary>;
 
   if(profile){
-    if(!profile.approved) return shell(
+    if(!profile.approved) return <ErrorBoundary>{shell(
       <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
         <div className="text-3xl">⏳</div>
         <p className="text-white font-semibold">Access Pending</p>
         <p className="text-slate-400 text-sm">Your request for <strong className="text-slate-200">{profile.email}</strong> is awaiting admin approval. You'll be able to log in once approved.</p>
         <button onClick={handleSignOut} className="text-slate-500 hover:text-slate-300 text-xs underline">Sign out</button>
       </div>
-    );
-    return <MainApp profile={profile} onSignOut={handleSignOut}/>;
+    )}</ErrorBoundary>;
+    return <ErrorBoundary><MainApp profile={profile} onSignOut={handleSignOut}/></ErrorBoundary>;
   }
 
-  if(screen==="pending") return shell(
+  if(screen==="pending") return <ErrorBoundary>{shell(
     <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
       <div className="text-3xl">✅</div>
       <p className="text-white font-semibold">Request Submitted</p>
       <p className="text-slate-400 text-sm">Your account is pending approval. An admin will review your request shortly.</p>
       <button onClick={()=>{setScreen("login");setEmail("");setPassword("");setFullName("");}} className="text-slate-500 hover:text-slate-300 text-xs underline">Back to sign in</button>
     </div>
-  );
+  )}</ErrorBoundary>;
 
-  if(screen==="signup") return shell(
+  if(screen==="signup") return <ErrorBoundary>{shell(
     <form onSubmit={handleSignUp} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
       <p className="text-white font-bold text-sm">Request Access</p>
       <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Full Name</label><input autoFocus className={inputCls} placeholder="Jane Smith" value={fullName} onChange={e=>{setFullName(e.target.value);setAuthErr("");}}/></div>
@@ -3813,9 +4070,9 @@ export default function App() {
       <button type="submit" disabled={authLoading} className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">{authLoading?"Submitting…":"Submit Request"}</button>
       <button type="button" onClick={()=>{setScreen("login");setAuthErr("");}} className="w-full text-slate-400 hover:text-slate-200 text-xs py-1 transition-all">Already have access? Sign in</button>
     </form>
-  );
+  )}</ErrorBoundary>;
 
-  return shell(
+  return <ErrorBoundary>{shell(
     <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-4">
       <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Email</label><input autoFocus type="email" className={inputCls} placeholder="you@cmgfi.com" value={email} onChange={e=>{setEmail(e.target.value);setAuthErr("");}}/></div>
       <div><label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Password</label><input type="password" className={inputCls} placeholder="Enter password" value={password} onChange={e=>{setPassword(e.target.value);setAuthErr("");}}/></div>
@@ -3823,5 +4080,5 @@ export default function App() {
       <button type="submit" disabled={authLoading} className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg transition-all text-sm shadow">{authLoading?"Signing in…":"Sign In"}</button>
       <button type="button" onClick={()=>{setScreen("signup");setAuthErr("");}} className="w-full text-slate-400 hover:text-slate-200 text-xs py-1 transition-all">Don't have access? Request it →</button>
     </form>
-  );
+  )}</ErrorBoundary>;
 }
