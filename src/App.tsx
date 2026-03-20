@@ -16,6 +16,38 @@ const guidelineDaysOld = (loanType: string): number => {
   if (!gv) return 0;
   return Math.floor((Date.now() - new Date(gv.lastVerified).getTime()) / 86400000);
 };
+const SLA_RULES = {
+  FHA: {
+    evaluationDeadlineDays: 30,
+    responseDeadlineDays: 10,
+    foreclosureHoldDays: 90,
+    label: "HUD Handbook 4000.1 §III.A.2",
+  },
+  USDA: {
+    evaluationDeadlineDays: 45,
+    responseDeadlineDays: 14,
+    foreclosureHoldDays: 60,
+    label: "RD Instruction 3555-C §3555.301",
+  },
+  VA: {
+    evaluationDeadlineDays: 30,
+    responseDeadlineDays: 10,
+    foreclosureHoldDays: 120,
+    label: "VA M26-4 Ch. 5",
+  },
+  FHLMC: {
+    evaluationDeadlineDays: 45,
+    responseDeadlineDays: 5,
+    foreclosureHoldDays: 60,
+    label: "Freddie Mac Guide §9201.1",
+  },
+  FNMA: {
+    evaluationDeadlineDays: 45,
+    responseDeadlineDays: 5,
+    foreclosureHoldDays: 60,
+    label: "Fannie Mae Servicing Guide D2-2-01",
+  },
+};
 const TABS = ["dashboard","inputs","results","audit","report","compare","portfolio","settings"];
 const TAB_LABELS = { dashboard:"📊 Dashboard", inputs:"📋 Inputs", results:"✅ Results", audit:"🔍 Audit Trail", report:"📄 Report", compare:"⚖️ Compare", portfolio:"📦 Portfolio", settings:"⚙️ Settings" };
 const HARDSHIP_TYPES = ["Reduction in Income","Unemployment","Business Failure","Increase in Housing Expenses","Property Problem","Unknown","Disaster"];
@@ -2661,6 +2693,30 @@ const SrcBadge = ({type}:{type:"los"|"borrower"|"calc"}) => {
   }[type];
   return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${cfg.bg} ${cfg.text} ml-1`}>{cfg.label}</span>;
 };
+const HelpTip = ({text}: {text: string}) => {
+  const [show, setShow] = useState(false);
+  return (
+    <span className="relative inline-block ml-1">
+      <button onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}
+        className="text-slate-300 hover:text-slate-500 text-xs leading-none">?</button>
+      {show && (
+        <div className="absolute z-50 bottom-5 left-0 w-56 bg-slate-800 text-white text-xs rounded-lg p-2.5 shadow-xl">
+          {text}
+        </div>
+      )}
+    </span>
+  );
+};
+const TOUR_STEPS = [
+  { title: "Welcome to ResolutionIQ", body: "The complete loss mitigation decision engine for FHA, USDA, VA, Fannie Mae, and Freddie Mac loans. Let's take a quick tour.", target: null },
+  { title: "📋 Start with Loan Data", body: "Enter loan financials in the Inputs tab. Most fields auto-compute from what you enter — you only need to fill in what's not already in your LOS.", target: "inputs" },
+  { title: "🔍 Run the Evaluation", body: "Click 'Evaluate Loan' to instantly check all loss mitigation options against current agency guidelines. The waterfall shows the best option first.", target: "results" },
+  { title: "📋 Document Checklist", body: "Select any eligible option to see exactly which documents are required and conditional. Track receipt with checkboxes.", target: "results" },
+  { title: "📦 Portfolio Mode", body: "Upload a CSV to evaluate hundreds of loans at once. Download results to Excel for management reporting.", target: "portfolio" },
+  { title: "📊 Dashboard", body: "Track all cases, assign to team members, update status from open → approved → implemented. Analytics show portfolio trends.", target: "dashboard" },
+  { title: "⚙️ Servicer Overlays", body: "Configure your firm's underwriting overlays (minimum FICO, max DLQ, excluded options) in Settings. These layer on top of agency guidelines.", target: "settings" },
+  { title: "You're ready! 🎉", body: "Press Ctrl+Enter to evaluate, Ctrl+S to save, Ctrl+K for the command palette. Questions? Hover any field for help.", target: null },
+];
 const Sec=({title,children})=>(<div className="mb-5"><div className="flex items-center gap-2 mb-3"><div className="h-3.5 w-0.5 rounded-full bg-emerald-500"/><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span></div><div className="space-y-2.5">{children}</div></div>);
 const F=({label,children})=>(<div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</label>{children}</div>);
 const Sel=({value,onChange,options})=>(<select className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm bg-white w-full shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-shadow" value={value} onChange={e=>onChange(e.target.value)}>{options.map(o=><option key={o} value={o}>{o}</option>)}</select>);
@@ -2936,6 +2992,19 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   // Notifications state
   const [notifications, setNotifications] = useState<{id:string, message:string, type:"info"|"success"|"warning", read:boolean, createdAt:string}[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  // SLA state
+  const [slaStartDate, setSlaStartDate] = useState("");
+  const [foreclosureSaleDate, setForeclosureSaleDate] = useState("");
+  // Version history state
+  const [currentCaseId, setCurrentCaseId] = useState<string|null>(null);
+  const [changeSummary, setChangeSummary] = useState("");
+  const [versions, setVersions] = useState<any[]>([]);
+  // Tour state
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  // Command palette state
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   useEffect(()=>{
     if(showAdmin&&profile.role==="admin"){
       supabase.rpc("get_pending_users").then(({data})=>setPendingUsers((data||[]) as any));
@@ -2990,6 +3059,57 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tour on first visit
+  useEffect(() => {
+    if (!localStorage.getItem("riq_tour_done")) {
+      setShowTour(true);
+    }
+  }, []);
+
+  // SLA computation
+  const computeSLA = () => {
+    const rules = SLA_RULES[loan.loanType as keyof typeof SLA_RULES];
+    if (!rules) return null;
+    const today = new Date();
+    const results_sla: {label: string, deadline: string, daysRemaining: number | null, status: "ok"|"warning"|"critical"|"unknown"}[] = [];
+
+    if (slaStartDate) {
+      const start = new Date(slaStartDate);
+      const evalDeadline = new Date(start);
+      evalDeadline.setDate(evalDeadline.getDate() + rules.evaluationDeadlineDays);
+      const evalDaysLeft = Math.ceil((evalDeadline.getTime() - today.getTime()) / 86400000);
+      results_sla.push({
+        label: `Evaluation deadline (${rules.evaluationDeadlineDays}d from request)`,
+        deadline: evalDeadline.toLocaleDateString(),
+        daysRemaining: evalDaysLeft,
+        status: evalDaysLeft < 0 ? "critical" : evalDaysLeft <= 5 ? "warning" : "ok",
+      });
+
+      const holdDeadline = new Date(start);
+      holdDeadline.setDate(holdDeadline.getDate() + rules.foreclosureHoldDays);
+      const holdDaysLeft = Math.ceil((holdDeadline.getTime() - today.getTime()) / 86400000);
+      results_sla.push({
+        label: `Foreclosure hold expires (${rules.foreclosureHoldDays}d from request)`,
+        deadline: holdDeadline.toLocaleDateString(),
+        daysRemaining: holdDaysLeft,
+        status: holdDaysLeft < 0 ? "critical" : holdDaysLeft <= 10 ? "warning" : "ok",
+      });
+    }
+
+    if (foreclosureSaleDate) {
+      const sale = new Date(foreclosureSaleDate);
+      const daysToSale = Math.ceil((sale.getTime() - today.getTime()) / 86400000);
+      results_sla.push({
+        label: "Days to foreclosure sale",
+        deadline: sale.toLocaleDateString(),
+        daysRemaining: daysToSale,
+        status: daysToSale < 0 ? "critical" : daysToSale <= 30 ? "critical" : daysToSale <= 60 ? "warning" : "ok",
+      });
+    }
+
+    return results_sla.length > 0 ? { rules, results: results_sla } : null;
+  };
+
   // Dashboard loader
   const loadDashboard = useCallback(async () => {
     if (!supabaseConfigured) return;
@@ -3026,6 +3146,29 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   }, [profile]);
 
   useEffect(() => { loadNotifications(); }, [loadNotifications]);
+
+  // Real-time subscription for dashboard
+  useEffect(() => {
+    if (!supabaseConfigured || !profile || tab !== "dashboard") return;
+    const channel = supabase
+      .channel("evaluations-changes")
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "evaluations",
+        filter: `user_id=eq.${profile.id}`,
+      }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setDashCases(prev => [payload.new as any, ...prev]);
+        } else if (payload.eventType === "UPDATE") {
+          setDashCases(prev => prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c));
+        } else if (payload.eventType === "DELETE") {
+          setDashCases(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [profile, tab]);
 
   const updateCaseStatus = async (id: string, status: string) => {
     await supabase.from("evaluations").update({ status }).eq("id", id);
@@ -3082,10 +3225,9 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
   const saveCase=async()=>{
     if(!supabaseConfigured){setSaveToast("Supabase not configured.");setTimeout(()=>setSaveToast(""),3000);return;}
     try{
-      const topElig=results.filter(r=>r.eligible)[0];
       const session = await supabase.auth.getSession();
       const userId = session.data.session?.user?.id;
-      await supabase.from("evaluations").insert({
+      const casePayload = {
         loan_number:loan.loanNumber||null,
         borrower_name:loan.borrowerName||null,
         loan_type:loan.loanType,
@@ -3097,12 +3239,49 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
         status:"evaluated",
         checked_docs:checkedDocs,
         assignee_email:assigneeEmail||null,
+        sla_start_date:slaStartDate||null,
+        foreclosure_sale_date:foreclosureSaleDate||null,
         ...(userId ? { user_id: userId } : {}),
-      });
-      setSaveToast("✅ Case saved!");
+      };
+      if (currentCaseId) {
+        // Update existing case
+        await supabase.from("evaluations").update(casePayload).eq("id", currentCaseId);
+        // Get current version count
+        const { data: versionData } = await supabase.from("evaluation_versions").select("version_number").eq("evaluation_id", currentCaseId).order("version_number", { ascending: false }).limit(1);
+        const nextVersion = versionData && versionData.length > 0 ? versionData[0].version_number + 1 : 1;
+        await supabase.from("evaluation_versions").insert({
+          evaluation_id: currentCaseId,
+          user_id: userId||null,
+          version_number: nextVersion,
+          loan_data: loan,
+          results: results,
+          notes: caseNotes||null,
+          change_summary: changeSummary||null,
+        });
+        setChangeSummary("");
+        setSaveToast("✅ Case updated — version "+nextVersion+" saved!");
+        loadVersions();
+      } else {
+        // Insert new case
+        const { data: inserted } = await supabase.from("evaluations").insert(casePayload).select("id").single();
+        if (inserted?.id) setCurrentCaseId(inserted.id);
+        setSaveToast("✅ Case saved!");
+      }
       setTimeout(()=>setSaveToast(""),3000);
     }catch(e:any){setSaveToast("Error saving: "+(e?.message||String(e)));setTimeout(()=>setSaveToast(""),4000);}
   };
+
+  const loadVersions = async () => {
+    if (!currentCaseId || !supabaseConfigured) return;
+    const { data } = await supabase
+      .from("evaluation_versions")
+      .select("*")
+      .eq("evaluation_id", currentCaseId)
+      .order("version_number", { ascending: false });
+    setVersions(data || []);
+  };
+
+  useEffect(() => { if (currentCaseId) loadVersions(); }, [currentCaseId]);
 
   const loadCases=async()=>{
     if(!supabaseConfigured){return;}
@@ -3120,6 +3299,9 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     setCaseNotes(savedCase.notes||"");
     setCheckedDocs(savedCase.checked_docs||{});
     setAssigneeEmail(savedCase.assignee_email||"");
+    setCurrentCaseId(savedCase.id||null);
+    setSlaStartDate(savedCase.sla_start_date||"");
+    setForeclosureSaleDate(savedCase.foreclosure_sale_date||"");
     setShowLoadModal(false);
     setTab("results");
   };
@@ -3154,6 +3336,51 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     }
   };
   const eligible=results.filter(r=>r.eligible), ineligible=results.filter(r=>!r.eligible);
+
+  const COMMANDS = [
+    { id:"eval", label:"🔍 Evaluate Loan", shortcut:"Ctrl+Enter", action: () => { evaluate(); setShowCommandPalette(false); } },
+    { id:"save", label:"💾 Save Case", shortcut:"Ctrl+S", action: () => { saveCase(); setShowCommandPalette(false); } },
+    { id:"reset", label:"🔄 New / Reset Loan", action: () => { setLoan({...initLoan}); setTab("inputs"); setShowCommandPalette(false); } },
+    { id:"print", label:"🖨️ Print Report", action: () => { setTab("report"); setTimeout(()=>window.print(),300); setShowCommandPalette(false); } },
+    { id:"tab-dashboard", label:"📊 Go to Dashboard", shortcut:"1", action: () => { setTab("dashboard"); setShowCommandPalette(false); } },
+    { id:"tab-inputs", label:"📋 Go to Inputs", shortcut:"2", action: () => { setTab("inputs"); setShowCommandPalette(false); } },
+    { id:"tab-results", label:"✅ Go to Results", shortcut:"3", action: () => { setTab("results"); setShowCommandPalette(false); } },
+    { id:"tab-portfolio", label:"📦 Go to Portfolio", shortcut:"7", action: () => { setTab("portfolio"); setShowCommandPalette(false); } },
+    { id:"tab-settings", label:"⚙️ Go to Settings", shortcut:"8", action: () => { setTab("settings"); setShowCommandPalette(false); } },
+    { id:"tour", label:"🎓 Restart Onboarding Tour", action: () => { setTourStep(0); setShowTour(true); setShowCommandPalette(false); } },
+    { id:"share", label:"🔗 Share Evaluation Link", action: () => { shareEvaluation(); setShowCommandPalette(false); } },
+  ];
+
+  // Keyboard shortcut handler
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "Enter") {
+        e.preventDefault();
+        evaluate();
+      }
+      if (e.ctrlKey && e.key === "s") {
+        e.preventDefault();
+        if (supabaseConfigured && profile) saveCase();
+      }
+      if (e.ctrlKey && e.key === "k") {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+      }
+      if (e.key === "Escape") {
+        setShowCommandPalette(false);
+        setShowNotifications(false);
+        setShowTour(false);
+      }
+      if (!["INPUT","TEXTAREA","SELECT"].includes((e.target as HTMLElement)?.tagName)) {
+        const tabKeys: Record<string, string> = {"1":"dashboard","2":"inputs","3":"results","4":"audit","5":"report","6":"compare","7":"portfolio","8":"settings"};
+        if (tabKeys[e.key]) { e.preventDefault(); setTab(tabKeys[e.key]); }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evaluate, saveCase, profile]);
+
   const filteredCases = dashCases.filter(c => {
     const matchSearch = !dashSearch ||
       c.loan_number?.toLowerCase().includes(dashSearch.toLowerCase()) ||
@@ -3234,6 +3461,74 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
     const a = document.createElement("a"); a.href = url; a.download = "portfolio_evaluation.csv"; a.click();
     URL.revokeObjectURL(url);
   };
+
+  const escXml = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  const generateXLSX = (data: {sheet: string, headers: string[], rows: (string|number)[][]}[]) => {
+    const xmlSheets = data.map(({sheet, headers, rows}) => {
+      const headerRow = `<Row>${headers.map(h => `<Cell><Data ss:Type="String">${escXml(h)}</Data></Cell>`).join("")}</Row>`;
+      const dataRows = rows.map(row =>
+        `<Row>${row.map(cell => `<Cell><Data ss:Type="${typeof cell === "number" ? "Number" : "String"}">${escXml(String(cell??''))}</Data></Cell>`).join("")}</Row>`
+      ).join("");
+      return `<Worksheet ss:Name="${escXml(sheet)}"><Table>${headerRow}${dataRows}</Table></Worksheet>`;
+    }).join("");
+    const xml = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">${xmlSheets}</Workbook>`;
+    const blob = new Blob([xml], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "evaluation.xls"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportCaseToExcel = () => {
+    const gmi_ex = n(loan.grossMonthlyIncome);
+    const piti_ex = n(loan.currentPITI);
+    const summaryRows: (string|number)[][] = [
+      ["Loan Number", loan.loanNumber || ""],
+      ["Borrower", loan.borrowerName || ""],
+      ["Loan Type", loan.loanType],
+      ["Delinquency", `${loan.delinquencyMonths} months`],
+      ["UPB", n(loan.upb)],
+      ["Gross Monthly Income", gmi_ex],
+      ["Current PITI", piti_ex],
+      ["Housing Ratio", gmi_ex > 0 && piti_ex > 0 ? Number((piti_ex/gmi_ex*100).toFixed(2)) : ""],
+      ["Hardship Type", loan.hardshipType],
+      ["Hardship Duration", loan.hardshipDuration],
+      ["Evaluated", new Date().toLocaleDateString()],
+      ["Guidelines", GUIDELINE_VERSIONS[loan.loanType as keyof typeof GUIDELINE_VERSIONS]?.version || ""],
+    ];
+    const eligibleRows = results.filter(r => r.eligible).map((r, i) => [
+      i + 1,
+      r.option,
+      OPTION_CITATIONS[r.option] || "",
+      r.note || "",
+    ]);
+    const allRows = results.map(r => [
+      r.option,
+      r.eligible ? "Eligible" : "Ineligible",
+      r.nodes?.find((nd: any) => !nd.pass)?.question || "",
+      r.nodes?.find((nd: any) => !nd.pass)?.answer || "",
+      OPTION_CITATIONS[r.option] || "",
+    ]);
+    generateXLSX([
+      { sheet: "Loan Summary", headers: ["Field", "Value"], rows: summaryRows },
+      { sheet: "Eligible Options", headers: ["#", "Option", "Regulatory Basis", "Notes"], rows: eligibleRows },
+      { sheet: "All Options", headers: ["Option", "Status", "Failed Criterion", "Failed Value", "Regulatory Basis"], rows: allRows },
+    ]);
+  };
+
+  const exportPortfolioXLSX = () => {
+    const rows: (string|number)[][] = portfolioResults.map(r => [
+      r.loanNumber, r.borrowerName || "", r.loanType,
+      Number(r.delinquencyMonths) || 0,
+      Number(r._loan.upb) || 0,
+      r.eligibleCount, r.topOption, r.eligible, r.hardshipType || "",
+    ]);
+    generateXLSX([{
+      sheet: "Portfolio Evaluation",
+      headers: ["Loan #","Borrower","Type","DLQ Months","UPB","Eligible Count","Top Option","All Eligible Options","Hardship"],
+      rows,
+    }]);
+  };
+
   const gmi=n(loan.grossMonthlyIncome);
   const target31=gmi>0?(gmi*0.31).toFixed(2):null;
   const target40=gmi>0?(gmi*0.40).toFixed(2):null;
@@ -3366,6 +3661,74 @@ function MainApp({profile,onSignOut}:{profile:Profile;onSignOut:()=>void}) {
           </div>
         </div>
       )}
+      {/* ── Tour Modal ── */}
+      {showTour && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full">
+            <div className="text-xs text-slate-400 mb-1">Step {tourStep + 1} of {TOUR_STEPS.length}</div>
+            <div className="text-lg font-black text-slate-800 mb-2">{TOUR_STEPS[tourStep].title}</div>
+            <div className="text-sm text-slate-600 mb-6">{TOUR_STEPS[tourStep].body}</div>
+            <div className="flex gap-1.5 justify-center mb-4">
+              {TOUR_STEPS.map((_, i) => (
+                <div key={i} className={`w-2 h-2 rounded-full transition-colors ${i === tourStep ? "bg-emerald-600" : "bg-slate-200"}`}/>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => { setShowTour(false); localStorage.setItem("riq_tour_done","1"); }}
+                className="text-xs text-slate-400 hover:text-slate-600 px-3 py-2">Skip tour</button>
+              <div className="flex-1"/>
+              {tourStep > 0 && (
+                <button onClick={() => setTourStep(s => s - 1)}
+                  className="px-4 py-2 rounded-lg border text-sm font-medium hover:bg-slate-50">← Back</button>
+              )}
+              <button onClick={() => {
+                if (tourStep < TOUR_STEPS.length - 1) {
+                  const next = TOUR_STEPS[tourStep + 1];
+                  if (next.target) setTab(next.target);
+                  setTourStep(s => s + 1);
+                } else {
+                  setShowTour(false);
+                  localStorage.setItem("riq_tour_done", "1");
+                }
+              }} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-800">
+                {tourStep < TOUR_STEPS.length - 1 ? "Next →" : "Get Started →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Command Palette ── */}
+      {showCommandPalette && (
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center pt-24 z-50 p-4" onClick={() => setShowCommandPalette(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onClick={e => e.stopPropagation()}>
+            <div className="p-3 border-b border-slate-100">
+              <input autoFocus className="w-full text-sm outline-none px-2 py-1"
+                placeholder="Type a command..."
+                value={commandQuery} onChange={e => setCommandQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    const filtered = COMMANDS.filter(c => c.label.toLowerCase().includes(commandQuery.toLowerCase()));
+                    if (filtered.length > 0) filtered[0].action();
+                  }
+                }}/>
+            </div>
+            <div className="max-h-72 overflow-y-auto py-1">
+              {COMMANDS.filter(c => !commandQuery || c.label.toLowerCase().includes(commandQuery.toLowerCase())).map(cmd => (
+                <button key={cmd.id} onClick={cmd.action}
+                  className="w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between">
+                  <span>{cmd.label}</span>
+                  {cmd.shortcut && <kbd className="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded font-mono">{cmd.shortcut}</kbd>}
+                </button>
+              ))}
+            </div>
+            <div className="p-2 border-t border-slate-100 text-xs text-slate-400 text-center">
+              ↑↓ navigate · Enter select · Esc close
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── DB Setup Modal ── */}
       {showDbSetup&&(
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>setShowDbSetup(false)}>
@@ -3389,7 +3752,9 @@ CREATE TABLE IF NOT EXISTS evaluations (
   guideline_version text,
   evaluated_at timestamptz,
   status text DEFAULT 'open',
-  user_id uuid REFERENCES auth.users(id)
+  user_id uuid REFERENCES auth.users(id),
+  sla_start_date date,
+  foreclosure_sale_date date
 );
 
 -- Enable Row Level Security
@@ -3397,7 +3762,22 @@ ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;
 
 -- Users see only their own cases
 CREATE POLICY "Users see own cases" ON evaluations
-  FOR ALL USING (auth.uid() = user_id);`}</pre>
+  FOR ALL USING (auth.uid() = user_id);
+
+-- Version history table
+CREATE TABLE IF NOT EXISTS evaluation_versions (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  evaluation_id uuid REFERENCES evaluations(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES auth.users(id),
+  version_number integer NOT NULL DEFAULT 1,
+  loan_data jsonb NOT NULL,
+  results jsonb,
+  notes text,
+  change_summary text,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE evaluation_versions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users see own versions" ON evaluation_versions FOR ALL USING (auth.uid() = user_id);`}</pre>
               <button onClick={()=>{navigator.clipboard.writeText(`CREATE TABLE IF NOT EXISTS evaluations (\n  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,\n  loan_number text,\n  borrower_name text,\n  loan_type text,\n  created_at timestamptz DEFAULT now(),\n  loan_data jsonb NOT NULL,\n  results jsonb,\n  notes text,\n  guideline_version text,\n  evaluated_at timestamptz,\n  status text DEFAULT 'open',\n  user_id uuid REFERENCES auth.users(id)\n);\n\nALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;\n\nCREATE POLICY "Users see own cases" ON evaluations\n  FOR ALL USING (auth.uid() = user_id);`);}} className="mt-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all">📋 Copy SQL</button>
             </div>
           </div>
@@ -3497,6 +3877,12 @@ CREATE POLICY "Users see own cases" ON evaluations
           <div className="max-w-7xl mx-auto">
             <div className="flex items-center gap-3 mb-5">
               <div className="text-xl font-black text-slate-800">Case Dashboard</div>
+              {supabaseConfigured && profile && (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-semibold">
+                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"/>
+                  Live
+                </div>
+              )}
               <button onClick={loadDashboard} className="text-xs bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg">🔄 Refresh</button>
               <button onClick={() => setTab("inputs")} className="text-xs bg-emerald-700 text-white hover:bg-emerald-800 px-3 py-1.5 rounded-lg ml-auto">+ New Evaluation</button>
             </div>
@@ -3685,11 +4071,11 @@ CREATE POLICY "Users see own cases" ON evaluations
                 <F label="Current Monthly Escrow"><Num value={loan.currentEscrow} onChange={v=>set("currentEscrow",v)} placeholder="e.g. 350" prefix="$"/></F>
                 <F label="Current Monthly P&I"><Num value={loan.currentPI} onChange={v=>set("currentPI",v)} placeholder="e.g. 1450" prefix="$"/></F>
                 <F label="Current Monthly PITI"><Num value={loan.currentPITI} onChange={v=>set("currentPITI",v)} placeholder="e.g. 1800" prefix="$"/></F>
-                <F label="Gross Monthly Income"><Num value={loan.grossMonthlyIncome} onChange={v=>set("grossMonthlyIncome",v)} placeholder="e.g. 5000" prefix="$"/></F>
+                <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Gross Monthly Income<HelpTip text="Total verified pre-tax income from all sources (borrower + co-borrower). Use the same figure as the original underwriting if income hasn't changed."/></label><Num value={loan.grossMonthlyIncome} onChange={v=>set("grossMonthlyIncome",v)} placeholder="e.g. 5000" prefix="$"/></div>
                 <F label="Monthly Non-Housing Expenses"><Num value={loan.monthlyExpenses} onChange={v=>set("monthlyExpenses",v)} placeholder="e.g. 500 (car, CC min, student loans)" prefix="$"/></F>
-                <F label="Cash Reserves (Liquid Assets)"><Num value={loan.cashReservesAmount} onChange={v=>set("cashReservesAmount",v)} placeholder="e.g. 8000" prefix="$"/></F>
+                <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Cash Reserves (Liquid Assets)<HelpTip text="Total liquid assets (checking, savings, money market). Do not include retirement accounts unless accessible without penalty."/></label><Num value={loan.cashReservesAmount} onChange={v=>set("cashReservesAmount",v)} placeholder="e.g. 8000" prefix="$"/></div>
                 <F label="Current Interest Rate (%)"><Num value={loan.currentInterestRate} onChange={v=>set("currentInterestRate",v)} placeholder="e.g. 6.5"/></F>
-                {loan.loanType !== "FHLMC" && <F label="PMMS Rate (%)"><Num value={loan.pmmsRate} onChange={v=>set("pmmsRate",v)} placeholder="e.g. 7.1"/></F>}
+                {loan.loanType !== "FHLMC" && <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">PMMS Rate (%)<HelpTip text="Freddie Mac Primary Mortgage Market Survey rate. Check freddiemac.com/pmms for current week's rate."/></label><Num value={loan.pmmsRate} onChange={v=>set("pmmsRate",v)} placeholder="e.g. 7.1"/></div>}
                 {gmi>0&&(loan.loanType === "FHA" || loan.loanType === "USDA")&&<div className="bg-emerald-50 rounded p-2 text-xs text-emerald-800 space-y-0.5 mt-1">
                   {loan.loanType==="FHA"&&n(loan.currentPI)>0&&<div>FHA 25% P&I Target: <strong>{fmt$(n(loan.currentPI)*0.75)} P&I + {fmt$(n(loan.currentEscrow))} escrow</strong></div>}
                   {loan.loanType==="USDA"&&<div>31% GMI Target: <strong>${target31}/mo</strong></div>}
@@ -3700,7 +4086,7 @@ CREATE POLICY "Users see own cases" ON evaluations
                 {loan.loanType === "USDA" && <F label="Target Payment Override (optional — leave blank to use 31% GMI)"><Num value={loan.targetPayment} onChange={v=>set("targetPayment",v)} placeholder="Auto: 31% GMI" prefix="$"/></F>}
               </Sec>
               <Sec title="📐 Amounts to Capitalize / Defer">
-                <F label="Arrearages (past-due P&I + escrow advances — total for capitalization)"><Num value={loan.arrearagesToCapitalize} onChange={v=>set("arrearagesToCapitalize",v)} placeholder="e.g. 7200" prefix="$"/></F>
+                <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Arrearages (past-due P&I + escrow advances — total for capitalization)<HelpTip text="Total past-due P&I and escrow advances that will be added to the loan balance. Does not include late fees."/></label><Num value={loan.arrearagesToCapitalize} onChange={v=>set("arrearagesToCapitalize",v)} placeholder="e.g. 7200" prefix="$"/></div>
                 <F label="Escrow Advance Balance (servicer-paid taxes/insurance — included in Payment Deferral)"><Num value={loan.escrowAdvanceBalance} onChange={v=>set("escrowAdvanceBalance",v)} placeholder="e.g. 0" prefix="$"/></F>
                 <F label="Accrued Delinquent Interest"><Num value={loan.accruedDelinquentInterest} onChange={v=>set("accruedDelinquentInterest",v)} placeholder="e.g. 0" prefix="$"/></F>
                 <F label="Suspense / Unapplied Funds (offsets deferred amount)"><Num value={loan.suspenseBalance} onChange={v=>set("suspenseBalance",v)} placeholder="e.g. 0" prefix="$"/></F>
@@ -3756,7 +4142,7 @@ CREATE POLICY "Users see own cases" ON evaluations
                 <div className="flex items-center gap-1 mb-1"><SrcBadge type="los"/><span className="text-[10px] text-slate-400 ml-1">Pull from servicing system</span></div>
                 <F label="Hardship Type"><Sel value={loan.hardshipType} onChange={v=>set("hardshipType",v)} options={HARDSHIP_TYPES}/></F>
                 <F label="Hardship Duration"><Sel value={loan.hardshipDuration} onChange={v=>set("hardshipDuration",v)} options={["Short Term","Long Term","Permanent","Unknown","Resolved"]}/></F>
-                <F label="Delinquency (months)"><Num value={loan.delinquencyMonths} onChange={v=>set("delinquencyMonths",v)} placeholder="e.g. 4"/></F>
+                <div className="flex flex-col gap-1"><label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Delinquency (months)<HelpTip text="Number of monthly payments missed. A borrower who missed Jan and Feb payments but paid March would be 2 months delinquent."/></label><Num value={loan.delinquencyMonths} onChange={v=>set("delinquencyMonths",v)} placeholder="e.g. 4"/></div>
                 <F label="Delinquency (days — override)">
                   {loan.delinquencyMonths && !loan.delinquencyDays
                     ? <div className="flex items-center gap-2"><Num value={loan.delinquencyDays} onChange={v=>set("delinquencyDays",v)} placeholder="e.g. 120"/><span className="text-xs text-blue-600 whitespace-nowrap font-semibold">auto: {n(loan.delinquencyMonths)*30}d</span></div>
@@ -4097,6 +4483,11 @@ CREATE POLICY "Users see own cases" ON evaluations
                 </div>);
               })()}
               <button onClick={evaluate} className="w-full bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white font-black py-3 rounded-xl text-sm mt-3 shadow-lg shadow-emerald-200 transition-all active:scale-95">🔍 Evaluate Loan →</button>
+              <div className="text-xs text-slate-400 text-center mt-2">
+                <kbd className="bg-slate-100 px-1 rounded">Ctrl+Enter</kbd> evaluate ·{" "}
+                <kbd className="bg-slate-100 px-1 rounded ml-1">Ctrl+K</kbd> command palette ·{" "}
+                <kbd className="bg-slate-100 px-1 rounded ml-1">1–8</kbd> tabs
+              </div>
               {supabaseConfigured
                 ? <button onClick={loadCases} className="w-full bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold py-2.5 rounded-xl text-sm mt-2 shadow-sm transition-all">📂 Load Case</button>
                 : <div className="mt-2 text-xs text-slate-400 text-center bg-slate-50 rounded-xl px-3 py-2 border border-slate-100">Supabase not configured — set up .env to enable save/load</div>}
@@ -4121,6 +4512,7 @@ CREATE POLICY "Users see own cases" ON evaluations
                   <span className="text-xs bg-red-100 text-red-700 px-2.5 py-1 rounded-full font-bold">{ineligible.length} ineligible</span>
                   <button onClick={shareEvaluation} className="ml-auto text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">🔗 Share</button>
                   <button onClick={printReport} className="text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">🖨 Print Report</button>
+                  <button onClick={exportCaseToExcel} className="text-xs bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">📊 Export to Excel</button>
                   {supabaseConfigured
                     ? <button onClick={saveCase} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-600 px-3 py-1.5 rounded-lg shadow-sm font-medium transition-all">💾 Save Case</button>
                     : null}
@@ -4244,7 +4636,12 @@ CREATE POLICY "Users see own cases" ON evaluations
                       <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Assign To (email)</div>
                       <input className="border border-slate-200 rounded px-2 py-1 text-sm w-full" value={assigneeEmail} onChange={e=>setAssigneeEmail(e.target.value)} placeholder="colleague@company.com"/>
                     </div>
-                    <button onClick={saveCase} className="mt-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg transition-all">💾 Save Case</button>
+                    {currentCaseId && (
+                      <input className="border rounded px-2 py-1 text-xs w-full mt-2 mb-1"
+                        placeholder="What changed? (optional)"
+                        value={changeSummary} onChange={e => setChangeSummary(e.target.value)}/>
+                    )}
+                    <button onClick={saveCase} className="mt-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg transition-all">💾 {currentCaseId ? "Update Case" : "Save Case"}</button>
                     {saveToast&&<div className="mt-1.5 text-xs text-emerald-700 font-semibold">{saveToast}</div>}
                   </div>
                 )}
@@ -4345,6 +4742,74 @@ CREATE POLICY "Users see own cases" ON evaluations
                     })()}
                   </div>
                 )}
+                {/* SLA / Regulatory Timelines */}
+                {(() => {
+                  const sla = computeSLA();
+                  const rules = SLA_RULES[loan.loanType as keyof typeof SLA_RULES];
+                  return (
+                    <div className="bg-white rounded-2xl border border-slate-200 p-5 mt-4 mb-4">
+                      <div className="text-sm font-black text-slate-700 mb-3">⏱️ Regulatory Timelines</div>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <div>
+                          <label className="text-xs font-bold text-slate-500 block mb-1">Borrower Request Date</label>
+                          <input type="date" className="border rounded-lg px-2 py-1.5 text-xs w-full"
+                            value={slaStartDate} onChange={e => setSlaStartDate(e.target.value)}/>
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-slate-500 block mb-1">Foreclosure Sale Date</label>
+                          <input type="date" className="border rounded-lg px-2 py-1.5 text-xs w-full"
+                            value={foreclosureSaleDate} onChange={e => setForeclosureSaleDate(e.target.value)}/>
+                        </div>
+                      </div>
+                      {sla ? (
+                        <div className="space-y-2">
+                          {sla.results.map((r, i) => {
+                            const colors = { ok:"bg-emerald-50 border-emerald-200 text-emerald-800", warning:"bg-amber-50 border-amber-200 text-amber-800", critical:"bg-red-50 border-red-200 text-red-800", unknown:"bg-slate-50 border-slate-200 text-slate-600" };
+                            const c = colors[r.status];
+                            return (
+                              <div key={i} className={`rounded-lg border p-2.5 ${c}`}>
+                                <div className="text-xs font-semibold">{r.label}</div>
+                                <div className="flex items-center justify-between mt-0.5">
+                                  <span className="text-xs">{r.deadline}</span>
+                                  <span className="text-xs font-black">
+                                    {r.daysRemaining !== null ? (r.daysRemaining < 0 ? `${Math.abs(r.daysRemaining)}d OVERDUE` : `${r.daysRemaining}d remaining`) : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {rules && <div className="text-[10px] text-slate-400 mt-2">Per {rules.label}</div>}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-400 text-center py-2">Enter dates above to track deadlines</div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Version History */}
+                {currentCaseId && versions.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+                    <div className="text-sm font-black text-slate-700 mb-3">📜 Version History</div>
+                    <div className="space-y-2">
+                      {versions.map((v, i) => (
+                        <div key={i} className="flex items-center justify-between bg-slate-50 rounded-lg px-3 py-2 text-xs">
+                          <div>
+                            <span className="font-bold text-slate-700">v{v.version_number}</span>
+                            <span className="text-slate-400 ml-2">{new Date(v.created_at).toLocaleDateString()}</span>
+                            {v.change_summary && <span className="text-slate-500 ml-2">— {v.change_summary}</span>}
+                          </div>
+                          <button
+                            onClick={() => { setLoan({...initLoan,...v.loan_data}); setResults(v.results||[]); setEvaluated(true); }}
+                            className="text-emerald-600 hover:text-emerald-800 font-semibold ml-2">
+                            Restore
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Ineligible Options</div>
                 {ineligible.map((r,i)=>{
                   const fail=r.nodes?.find(nd=>!nd.pass);
@@ -4635,6 +5100,7 @@ CREATE POLICY "Users see own cases" ON evaluations
 
                 <div className="flex gap-2 mb-3">
                   <button onClick={exportPortfolioCSV} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-emerald-800">⬇️ Export CSV</button>
+                  <button onClick={exportPortfolioXLSX} className="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-800">📊 Export to Excel</button>
                   <button onClick={() => { setPortfolioResults([]); setPortfolioFile(null); }} className="bg-slate-100 text-slate-700 px-4 py-2 rounded-lg text-sm hover:bg-slate-200">Clear</button>
                 </div>
 
@@ -4752,6 +5218,12 @@ CREATE POLICY "Users see own cases" ON evaluations
                 <strong>Report footer preview:</strong> {overlays.customNote}
               </div>
             )}
+
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-4">
+              <div className="text-sm font-bold text-slate-700 mb-3">🎓 Onboarding</div>
+              <button onClick={() => { setTourStep(0); setShowTour(true); }}
+                className="text-xs text-emerald-600 underline">Restart onboarding tour</button>
+            </div>
           </div>
         )}
       </div>
